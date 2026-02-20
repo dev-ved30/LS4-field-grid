@@ -42,4 +42,4 @@ df.to_csv("LS4_field_grid.csv", index=False)
 print(df)
 
 
-plot_field_grid(vertices, footprints[1000:1001])
+plot_field_grid(vertices, [footprints[1000] ,footprints[1001], footprints[1004]])

@@ -33,6 +33,16 @@ def skip_alternate_fields_in_dec(fields):
             unskipped_fields.append(f)
     return unskipped_fields
 
+def skip_polar_fields(fields):
+
+    unskipped_fields = []
+    for f in fields:
+        
+        if f.coord.dec > -70*u.deg:
+            unskipped_fields.append(f)
+    
+    return unskipped_fields
+
 def get_visible_fields():
     """Get the list of fields that are currently visible from La Silla Observatory."""
 
@@ -55,17 +65,19 @@ def get_visible_fields():
         all_fields.append(field_target)
 
     alternate_fields = skip_alternate_fields_in_dec(all_fields) 
+    non_polar_fields = skip_polar_fields(alternate_fields)
+
 
     # Check which fields are visible tonight
     is_visible = astroplan.is_observable(global_constraints, 
                                          LS4, 
-                                         alternate_fields, 
+                                         non_polar_fields,
                                          time_range=time_range)
     
      # Print visible fields
-    visible_fields = [alternate_fields[i] for i in range(len(alternate_fields)) if is_visible[i]]
+    visible_fields = [non_polar_fields[i] for i in range(len(non_polar_fields)) if is_visible[i]]
     
-    plot_visible_fields(alternate_fields, is_visible)
+    plot_visible_fields(non_polar_fields, is_visible)
     return visible_fields
 
 def get_obs_blocks():

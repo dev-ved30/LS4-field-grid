@@ -192,7 +192,7 @@ def get_obs_plan():
                                             observer = LS4,
                                             transitioner = transitioner)
         seq_scheduler(b, sequential_schedule)   
-        combined_obs_plan.append(sequential_schedule.to_table(show_unused=False).to_pandas())
+        combined_obs_plan.append(sequential_schedule.to_table(show_unused=True).to_pandas())
 
     
     # concatenate the astropy tables

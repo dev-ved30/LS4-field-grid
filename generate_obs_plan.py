@@ -15,6 +15,8 @@ from astroplan import ObservingBlock
 from visualizations import plot_visible_fields, plot_obs_plan
 from constants import *
 from build_field_grid import region
+from astroplan.plots import plot_schedule_airmass
+import matplotlib.pyplot as plt
 
 
 # Universal constraints for all targets
@@ -107,33 +109,38 @@ def get_obs_blocks():
 
     # Chop up the night into 30 minute black and assign 18 field to each block, alternating between the two configs to maximize the number of fields observed while minimizing slews. This is a simple heuristic that can be improved with more sophisticated scheduling algorithms.
     block_duration = 30*u.minute
-    fields_per_block = block_duration / (exp + read_out)
+    fields_per_block = 15
     current_time = night_start
 
     block_number = 0
     while current_time < night_end:
 
+        if night_end - current_time < block_duration:
+            break
+
         block = []
         block_durations = [current_time, current_time + block_duration]
+        
 
         print(f"Scheduling block {block_number} from {block_durations[0]} to {block_durations[1]} with config {1 if block_number % 2 == 0 else 2}...")
-
-        # find which fields are visible during this block
-        time_constraint = TimeConstraint(block_durations[0], block_durations[1])
-        block_constraints = global_constraints + [time_constraint]\
         
         if block_number % 2 == 0:
-            visible_fields_in_block = [f for f in visible_fields_g1 if astroplan.is_observable(block_constraints, LS4, [f], time_range=block_durations)[0]]
+            visible_fields_in_block = [f for f in visible_fields_g1 if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0]]
         else:
-            visible_fields_in_block = [f for f in visible_fields_g2 if astroplan.is_observable(block_constraints, LS4, [f], time_range=block_durations)[0]]
+            visible_fields_in_block = [f for f in visible_fields_g2 if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0]]
+        
+        # sort by angular distance from the first field to minimize slews
+        if len(blocks) > 0:
+            last_field = blocks[-1][0].target
+            visible_fields_in_block.sort(key=lambda f: last_field.coord.separation(f.coord))
 
-        for target in visible_fields_in_block[:int(fields_per_block)]:
+        for target in visible_fields_in_block[:fields_per_block]:
             b = ObservingBlock.from_exposures(target, 
                                             priority=1, 
                                             time_per_exposure=exp, 
                                             number_exposures=num_exposures, 
                                             readout_time=read_out,
-                                            constraints=block_constraints)
+                                            constraints=global_constraints)
             
             # add target to this block
             block.append(b)
@@ -151,8 +158,7 @@ def get_obs_blocks():
 
         if len(visible_fields_g1) == 0 and len(visible_fields_g2) == 0:
             break
-
-    print(f'{len(visible_fields_g1) + len(visible_fields_g2)} fields were not scheduled due to time constraints.')
+        print(f"{len(block)} fields scheduled in this block. {len(visible_fields_g1) + len(visible_fields_g2)} fields remaining to schedule.")
     
     return blocks, times
     
@@ -185,7 +191,9 @@ def get_obs_plan():
     transitioner = Transitioner(slew_rate)
     combined_obs_plan = []
 
-    for b, t in zip(blocks, times):
+    for i, (b, t) in enumerate(zip(blocks, times)):
+
+        print(f"Scheduling block {i} from {t[0]} to {t[1]}...")
 
         sequential_schedule = Schedule(t[0], t[1])
         seq_scheduler = SequentialScheduler(constraints = global_constraints,
@@ -193,11 +201,33 @@ def get_obs_plan():
                                             transitioner = transitioner)
         seq_scheduler(b, sequential_schedule)   
         combined_obs_plan.append(sequential_schedule.to_table(show_unused=True).to_pandas())
+        combined_obs_plan[-1]["block_number"] = i
+
+
+
+        # # plot the schedule with the airmass of the targets
+        # plt.figure(figsize = (14,6))
+        # plot_schedule_airmass(sequential_schedule)
+        # plt.legend(loc = "upper right")
+        # plt.show()
 
     
     # concatenate the astropy tables
     combined_obs_plan = pd.concat(combined_obs_plan, ignore_index=True)
     print(combined_obs_plan)
+
+    # remove the deg from ra and dec columns while preserving blank rows
+    combined_obs_plan['ra'] = pd.to_numeric(
+        combined_obs_plan['ra'].astype(str).str.replace(' deg', '', regex=False),
+        errors='coerce',
+    )
+    combined_obs_plan['dec'] = pd.to_numeric(
+        combined_obs_plan['dec'].astype(str).str.replace(' deg', '', regex=False),
+        errors='coerce',
+    )
+
+    combined_obs_plan['ra_hr'] = combined_obs_plan['ra'] * u.deg.to(u.hourangle)
+
     combined_obs_plan.to_csv("obs_plan.csv", index=False)
 
 

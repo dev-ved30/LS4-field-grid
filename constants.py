@@ -15,7 +15,7 @@ from regions import RectangleSkyRegion
 LS4 = Observer.at_site("La Silla Observatory")
 
 # Telescope specs
-slew_rate = .8*u.deg/u.second # Slew rate in degrees per second
+slew_rate = 8*u.deg/u.second # Slew rate in degrees per second
 read_out = 40 * u.second
 exp = 60*u.second
 

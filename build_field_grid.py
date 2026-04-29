@@ -37,8 +37,7 @@ def main():
 
     # the script below is just for testing the footprints and visualizations. It can be removed later.
     print(df)
-    footprints = footprint(region, vertices)
-    plot_field_grid(vertices, [footprints[1000] ,footprints[1001], footprints[1004], footprints[1006]])
+    plot_field_grid(df)
 
 if __name__ == "__main__":
     main()

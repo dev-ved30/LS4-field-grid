@@ -20,19 +20,45 @@ def footprint_outline(region):
     lat = np.append(lat, lat[0])
     return lon, lat
 
-def plot_field_grid(vertices, footprints):
+def plot_field_grid(field_grid_df):
+    """Plot the field grid vertices and a few example footprints for testing.
+    
+    Arguments:
+    field_grid_df -- a DataFrame containing the field grid vertices with columns "ra_deg", "dec_deg", and "Field Name"
+    """
+
+    vertices = SkyCoord(
+        ra=field_grid_df["ra_deg"].to_numpy() * u.deg,
+        dec=field_grid_df["dec_deg"].to_numpy() * u.deg,
+        frame="icrs",
+    )
+
+    field_names = field_grid_df["Field Name"].astype(str)
+    colors = []
+    for f in field_names:
+        ra_idx, dec_idx = f.split("_")
+        ra_idx = int(ra_idx)
+        dec_idx = int(dec_idx)
+        if dec_idx % 2 == 0 and ra_idx % 2 == 0:
+            colors.append("red")
+        else:
+            colors.append("gray")
+
+    all_footprints = footprint(region, vertices)
+    footprints = [all_footprints[1001], all_footprints[1002], all_footprints[1005], all_footprints[1007]]
+
     fig = go.Figure()
 
     fig.add_trace(go.Scattergeo(
         lon=vertices.ra.wrap_at(180 * u.deg).deg,
         lat=vertices.dec.deg,
         mode="markers",
-        marker=dict(size=4, color="royalblue"),
+        marker=dict(size=4, color=colors),
         name="Grid vertices"
     ))
 
-    for i, region in enumerate(footprints):
-        lon, lat = footprint_outline(region)
+    for i, r in enumerate(footprints):
+        lon, lat = footprint_outline(r)
         if lon is None:
             continue
         fig.add_trace(go.Scattergeo(

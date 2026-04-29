@@ -33,7 +33,7 @@ def main():
         df.loc[row.Index, "Field Name"] = f"{ra_idx}_{dec_idx}"
 
     # Save the field grid to a CSV file for later use in generating the observing plan
-    df.to_csv("LS4_field_grid.csv", index=False)
+    df.to_csv(LS4_field_grid_path, index=False)
 
     # the script below is just for testing the footprints and visualizations. It can be removed later.
     print(df)

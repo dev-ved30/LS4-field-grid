@@ -1,9 +1,9 @@
+import time
 import astroplan
-import astropy
+import argparse
+
 import pandas as pd
 
-from astroplan import Observer
-from astroplan.constraints import AirmassConstraint, TimeConstraint, AtNightConstraint
 from astroplan.target import FixedTarget
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -11,24 +11,21 @@ from astropy.time import Time
 from astroplan.scheduling import Transitioner, SequentialScheduler, Schedule
 from astroplan import ObservingBlock
 
-
-from visualizations import plot_visible_fields, plot_obs_plan
+from visualizations import plot_obs_plan
 from constants import *
 from build_field_grid import region
-from astroplan.plots import plot_schedule_airmass
-import matplotlib.pyplot as plt
-
-
-# Universal constraints for all targets
-global_constraints = [AirmassConstraint(max=2),
-                      AtNightConstraint.twilight_civil()]
 
 # Get the current time
 current_time = Time.now() # Fix this to a specific time for testing, e.g. Time("2024-06-01 00:00:00")
-night_start = LS4.twilight_evening_astronomical(current_time, which='next')
-night_end = LS4.twilight_morning_astronomical(current_time, which='next')
 
-def skip_alternate_fields_in_dec(fields, config):
+def argument_parser():
+
+    parser = argparse.ArgumentParser(description="Generate an observing plan for LS4 based on the field grid and current visibility.")
+    parser.add_argument('--mjd', required=False, type=float, default=current_time, help="MJD for which to generate the observing plan. If not provided, the current time will be used.")
+    parser.add_argument("--output", required=False, type=str, default=None, help="Path to save the generated observing plan CSV file. Default will just save to plans/yyyymmdd.csv")
+    return parser.parse_args()
+
+def skip_alternate_fields_in_dec(fields):
 
     unskipped_fields = []
     for f in fields:
@@ -36,12 +33,9 @@ def skip_alternate_fields_in_dec(fields, config):
         ra_idx, dec_idx = field_name.split("_")
         ra_idx = int(ra_idx)
         dec_idx = int(dec_idx)
-        if config == 1:
-            if dec_idx % 2 == 0 and ra_idx % 2 == 0:
-                unskipped_fields.append(f)
-        elif config == 2:
-            if dec_idx % 2 == 1 and ra_idx % 2 == 1:
-                unskipped_fields.append(f)
+        if dec_idx % 2 == 0 and ra_idx % 2 == 0:
+            unskipped_fields.append(f)
+
     return unskipped_fields
 
 def skip_polar_fields(fields):
@@ -55,15 +49,13 @@ def skip_polar_fields(fields):
     return unskipped_fields
 
 
-def get_visible_fields():
+def get_visible_fields(night_start, night_end):
     """Get the list of fields that are currently visible from La Silla Observatory."""
 
     # Read in the field grid
-    field_grid = pd.read_csv("LS4_field_grid.csv")
-
+    field_grid = pd.read_csv(LS4_field_grid_path)
 
     time_range = [night_start, night_end]
-    print(time_range)
 
     # Get a list of visible fields for tonight
     all_fields = []
@@ -73,68 +65,65 @@ def get_visible_fields():
         field_target = FixedTarget(name=row["Field Name"], coord=field_coords)
         all_fields.append(field_target)
 
-    alternate_fields_g1 = skip_alternate_fields_in_dec(all_fields, config=1) 
-    alternate_fields_g2 = skip_alternate_fields_in_dec(all_fields, config=2)
+    # only get primary pointing on the grid
+    alternate_fields = skip_alternate_fields_in_dec(all_fields) 
 
-    non_polar_fields_g1 = skip_polar_fields(alternate_fields_g1)
-    non_polar_fields_g2 = skip_polar_fields(alternate_fields_g2)
-
+    # skip the fields too close to the pole. These will probably be skipped due to high air mass anyway.
+    non_polar_fields = skip_polar_fields(alternate_fields)
 
     # Check which fields are visible tonight
-    is_visible_g1 = astroplan.is_observable(global_constraints, 
+    is_visible = astroplan.is_observable(global_constraints, 
                                          LS4, 
-                                         non_polar_fields_g1,
-                                         time_range=time_range)
-    
-    is_visible_g2 = astroplan.is_observable(global_constraints, 
-                                         LS4, 
-                                         non_polar_fields_g2,
+                                         non_polar_fields,
                                          time_range=time_range)
 
      # Print visible fields
-    visible_fields_g1 = [non_polar_fields_g1[i] for i in range(len(non_polar_fields_g1)) if is_visible_g1[i]]
-    visible_fields_g2 = [non_polar_fields_g2[i] for i in range(len(non_polar_fields_g2)) if is_visible_g2[i]]
+    visible_fields = [non_polar_fields[i] for i in range(len(non_polar_fields)) if is_visible[i]]
 
-    return visible_fields_g1, visible_fields_g2
+    return visible_fields
 
-def get_obs_blocks():
+def get_obs_blocks(night_start, night_end):
 
-    visible_fields_g1, visible_fields_g2 = get_visible_fields()
-    print(len(visible_fields_g1), "fields are visible tonight in config 1.")
-    print(len(visible_fields_g2), "fields are visible tonight in config 2.")
+    visible_fields = get_visible_fields(night_start, night_end)
+    print(len(visible_fields), "fields are visible tonight.")
 
     num_exposures = 1
     blocks = []
     times = []
 
     # Chop up the night into 30 minute black and assign 18 field to each block, alternating between the two configs to maximize the number of fields observed while minimizing slews. This is a simple heuristic that can be improved with more sophisticated scheduling algorithms.
-    block_duration = 30*u.minute
-    fields_per_block = 15
     current_time = night_start
 
     block_number = 0
     while current_time < night_end:
 
-        if night_end - current_time < block_duration:
+        # TODO: fix this since it currently wastes the last bit if the night
+        if night_end - current_time < 2*block_duration:
             break
 
         block = []
-        block_durations = [current_time, current_time + block_duration]
-        
+        block_dither = []
 
-        print(f"Scheduling block {block_number} from {block_durations[0]} to {block_durations[1]} with config {1 if block_number % 2 == 0 else 2}...")
-        
-        if block_number % 2 == 0:
-            visible_fields_in_block = [f for f in visible_fields_g1 if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0]]
-        else:
-            visible_fields_in_block = [f for f in visible_fields_g2 if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0]]
+        # Check the observability of the fields for the duration of the block and the revisit with dither.
+        block_durations = [current_time, current_time + block_duration]
+        revisit_duration = [current_time + block_duration, current_time + 2*block_duration]
+
+        # Only schedule fields that are observable for the entire block duration and the revisit duration.
+        fields_visible_for_revisit = []
+        for f in visible_fields:
+            if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0] and astroplan.is_observable(global_constraints, LS4, [f], time_range=revisit_duration)[0]:
+                fields_visible_for_revisit.append(f)    
         
         # sort by angular distance from the first field to minimize slews
         if len(blocks) > 0:
-            last_field = blocks[-1][0].target
-            visible_fields_in_block.sort(key=lambda f: last_field.coord.separation(f.coord))
+            starting_point = blocks[-1][0].target # for subsequent blocks, sort by distance from the last scheduled field to minimize slews
+        else:
+            fields_visible_for_revisit.sort(key=lambda f: f.coord.ra)
+            starting_point = fields_visible_for_revisit[0] # for the first block, just sort by RA
+        
+        fields_visible_for_revisit.sort(key=lambda f: f.coord.separation(starting_point.coord))
 
-        for target in visible_fields_in_block[:fields_per_block]:
+        for target in fields_visible_for_revisit[:fields_per_block]:
             b = ObservingBlock.from_exposures(target, 
                                             priority=1, 
                                             time_per_exposure=exp, 
@@ -145,49 +134,43 @@ def get_obs_blocks():
             # add target to this block
             block.append(b)
 
+            # add a dither to the block by offsetting the target coordinates by half a field in RA and Dec. This is a simple dither pattern that can be improved with more sophisticated patterns.
+            dithered_target = FixedTarget(name=target.name + "_dither",
+                                        coord=SkyCoord(ra=target.coord.ra + half_field_offset_ra,
+                                                        dec=target.coord.dec + half_field_offset_dec))
+            b_dither = ObservingBlock.from_exposures(dithered_target,
+                                            priority=1,
+                                            time_per_exposure=exp,
+                                            number_exposures=num_exposures,
+                                            readout_time=read_out,
+                                            constraints=global_constraints)
+            block_dither.append(b_dither)
+
             # remove target from the list of visible fields to avoid scheduling it again
-            if block_number % 2 == 0:
-                visible_fields_g1.remove(target)
-            else:
-                visible_fields_g2.remove(target)    
+            visible_fields.remove(target)
 
-        current_time += block_duration
-        block_number += 1
+
+        current_time += 2 * block_duration
+        block_number += 2
+
+        # Add blocks for both the original pointing and the revisit with the dither.
         blocks.append(block)
-        times.append(block_durations)
+        blocks.append(block_dither)
 
-        if len(visible_fields_g1) == 0 and len(visible_fields_g2) == 0:
+        times.append(block_durations)
+        times.append(revisit_duration)
+
+        if len(visible_fields) == 0:
             break
-        print(f"{len(block)} fields scheduled in this block. {len(visible_fields_g1) + len(visible_fields_g2)} fields remaining to schedule.")
+
+        print(f"{len(block)} fields scheduled in this block. {len(visible_fields)} fields remaining to schedule.")
     
     return blocks, times
     
     
+def get_obs_plan(night_start, night_end, output_path):
 
-
-
-    # # Create ObservingBlocks for each filter and target with our time
-    # # constraint, and durations determined by the exposures needed
-    # for target in visible_fields:
-    #     # We want each filter to have separate priority (so that target
-    #     # and reference are both scheduled)
-    #     b = ObservingBlock.from_exposures(target, 
-    #                                       priority=1, 
-    #                                       time_per_exposure=exp, 
-    #                                       number_exposures=num_exposures, 
-    #                                       readout_time=read_out,
-    #                                       constraints=global_constraints)
-
-    #     if len(blocks) > 100:
-    #         break
-
-    #     blocks.append(b)
-
-    # return blocks
-
-def get_obs_plan():
-
-    blocks, times = get_obs_blocks()
+    blocks, times = get_obs_blocks(night_start, night_end)
     transitioner = Transitioner(slew_rate)
     combined_obs_plan = []
 
@@ -204,15 +187,6 @@ def get_obs_plan():
         combined_obs_plan[-1]["block_number"] = i
 
 
-
-        # # plot the schedule with the airmass of the targets
-        # plt.figure(figsize = (14,6))
-        # plot_schedule_airmass(sequential_schedule)
-        # plt.legend(loc = "upper right")
-        # plt.show()
-
-    
-    # concatenate the astropy tables
     combined_obs_plan = pd.concat(combined_obs_plan, ignore_index=True)
     print(combined_obs_plan)
 
@@ -228,39 +202,29 @@ def get_obs_plan():
 
     combined_obs_plan['ra_hr'] = combined_obs_plan['ra'] * u.deg.to(u.hourangle)
 
-    combined_obs_plan.to_csv("obs_plan.csv", index=False)
+    combined_obs_plan.to_csv(output_path, index=False)
 
 
-    # # Get the current time
-    # current_time = Time.now()
-    # night_start = LS4.twilight_evening_astronomical(current_time, which='next')
-    # night_end = LS4.twilight_morning_astronomical(current_time, which='next')
-    
-    # # Initialize a Schedule object, to contain the new schedule
-    # sequential_schedule = Schedule(night_start, night_end)
-
-    # transitioner = Transitioner(slew_rate)
-
-    # # Initialize the sequential scheduler with the constraints and transitioner
-    # seq_scheduler = SequentialScheduler(constraints = global_constraints,
-    #                                     observer = LS4,
-    #                                     transitioner = transitioner)
-    
-
-
-    # # Call the schedule with the observing blocks and schedule to schedule the blocks
-    # seq_scheduler(blocks, sequential_schedule)
-    # print(sequential_schedule.to_table(show_unused=True))
-
-    # # plot the schedule over the field grid
-    plot_obs_plan(combined_obs_plan, region)
+    plot_obs_plan(combined_obs_plan)
     
 
 
 
 if __name__ == "__main__":
-    import time
+
     start_time = time.time()
-    get_obs_plan()
+
+    args = argument_parser()
+    mjd = args.mjd
+    night_start = LS4.twilight_evening_astronomical(Time(mjd, format='mjd'), which='next')
+    night_end = LS4.twilight_morning_astronomical(Time(mjd, format='mjd'), which='next')
+    
+    if args.output is not None:
+        output_path = args.output
+    else:
+        output_path = f"plans/{Time(mjd, format='mjd').to_datetime().strftime('%Y%m%d')}.csv"
+
+    get_obs_plan(night_start, night_end, output_path)
+
     end_time = time.time()
     print(f"Scheduling took {end_time - start_time:.2f} seconds.")

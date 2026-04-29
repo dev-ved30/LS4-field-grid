@@ -20,6 +20,20 @@ def footprint_outline(region):
     lat = np.append(lat, lat[0])
     return lon, lat
 
+def _normalize_footprint_result(footprint_result):
+    if hasattr(footprint_result, "to_polygon_sky") or hasattr(footprint_result, "vertices"):
+        return [footprint_result]
+
+    if isinstance(footprint_result, (list, tuple, np.ndarray)):
+        if len(footprint_result) == 0:
+            return []
+        first_item = footprint_result[0]
+        if isinstance(first_item, (list, tuple, np.ndarray)):
+            return list(first_item)
+        return list(footprint_result)
+
+    return [footprint_result]
+
 def plot_field_grid(field_grid_df):
     """Plot the field grid vertices and a few example footprints for testing.
     
@@ -122,25 +136,25 @@ def plot_visible_fields(fields, visibility):
     fig.show()
 
 def plot_obs_plan(plan):
-
-    field_grid = pd.read_csv(LS4_field_grid_path)
-    vertices = SkyCoord(
-        ra=field_grid["ra_deg"].to_numpy() * u.deg,
-        dec=field_grid["dec_deg"].to_numpy() * u.deg,
-        frame="icrs",
-    )
-    names = field_grid["Field Name"].astype(str)
-
     plan = plan.copy()
-    if "target" not in plan.columns or "start time (UTC)" not in plan.columns:
-        raise ValueError("plan must include 'target' and 'start time (UTC)' columns")
+    required_columns = {"target", "start time (UTC)", "ra", "dec"}
+    missing_columns = required_columns.difference(plan.columns)
+    if missing_columns:
+        raise ValueError(f"plan must include {sorted(required_columns)} columns")
 
-    block_column = "block_number"
+    if "block_number" in plan.columns:
+        block_column = "block_number"
+    elif "block_numer" in plan.columns:
+        block_column = "block_numer"
+    else:
+        raise ValueError("plan must include 'block_number' or 'block_numer' for coloring")
 
     plan = plan[plan["target"].astype(str) != "TransitionBlock"].copy()
     plan["start time (UTC)"] = pd.to_datetime(plan["start time (UTC)"])
     if "end time (UTC)" in plan.columns:
         plan["end time (UTC)"] = pd.to_datetime(plan["end time (UTC)"])
+    plan["ra"] = pd.to_numeric(plan["ra"], errors="coerce")
+    plan["dec"] = pd.to_numeric(plan["dec"], errors="coerce")
     plan.sort_values("start time (UTC)", inplace=True)
     plan.reset_index(drop=True, inplace=True)
 
@@ -149,9 +163,9 @@ def plot_obs_plan(plan):
         "Odd": "rgba(220,20,60,1.0)",
     }
 
-    footprints = footprint(region, vertices)
     fig = go.Figure()
     scheduled_rows = []
+    row_trace_counts = []
 
     legend_traces = [
         go.Scattergeo(
@@ -180,18 +194,17 @@ def plot_obs_plan(plan):
         fig.add_trace(trace)
 
     for _, row in plan.iterrows():
-        target_name = str(row["target"])
-        if "dither" in target_name.lower():
-            target_name = target_name.replace("_dither", "").strip()
-        target_matches = names[names == target_name]
-        if target_matches.empty:
-            print("skipping:", target_name)
+        if pd.isna(row["ra"]) or pd.isna(row["dec"]):
             continue
 
-        target_idx = target_matches.index[0]
-        footprint_region = footprints[target_idx]
-        lon, lat = footprint_outline(footprint_region)
-        if lon is None:
+        target_name = str(row["target"])
+        target_coord = SkyCoord(
+            ra=row["ra"] * u.deg,
+            dec=row["dec"] * u.deg,
+            frame="icrs",
+        )
+        footprint_regions = _normalize_footprint_result(footprint(region, target_coord))
+        if not footprint_regions:
             continue
 
         start_time = row["start time (UTC)"]
@@ -200,37 +213,49 @@ def plot_obs_plan(plan):
         block_label = int(block_value) if pd.notna(block_value) and float(block_value).is_integer() else block_value
         block_parity = "Odd" if int(block_value) % 2 else "Even"
         block_color = parity_colors[block_parity]
-        hover_text = f"Target: {target_name}<br>Start: {start_time}"
+        hover_text = f"Target: {target_name}<br>RA: {row['ra']:.3f}°<br>Dec: {row['dec']:.3f}°<br>Start: {start_time}"
         if end_time is not None:
             hover_text += f"<br>End: {end_time}"
         hover_text += f"<br>Block: {block_label} ({block_parity})"
 
-        fig.add_trace(go.Scattergeo(
-            lon=lon,
-            lat=lat,
-            mode="lines",
-            line=dict(width=1.8, color=block_color),
-            name=f"{block_parity} block",
-            showlegend=False,
-            visible=False,
-            hovertext=hover_text,
-            hoverinfo="text",
-        ))
-        scheduled_rows.append(row)
+        trace_count = 0
+        for footprint_region in footprint_regions:
+            lon, lat = footprint_outline(footprint_region)
+            if lon is None:
+                continue
+            fig.add_trace(go.Scattergeo(
+                lon=lon,
+                lat=lat,
+                mode="lines",
+                line=dict(width=1.8, color=block_color),
+                name=f"{block_parity} block",
+                showlegend=False,
+                visible=False,
+                hovertext=hover_text,
+                hoverinfo="text",
+            ))
+            trace_count += 1
+
+        if trace_count > 0:
+            scheduled_rows.append(row)
+            row_trace_counts.append(trace_count)
 
     if scheduled_rows:
         steps = []
+        cumulative_traces = 0
         for i, row in enumerate(scheduled_rows):
+            cumulative_traces += row_trace_counts[i]
             steps.append(dict(
                 method="update",
                 args=[
-                    {"visible": ["legendonly", "legendonly"] + [j <= i for j in range(len(scheduled_rows))]},
+                    {"visible": ["legendonly", "legendonly"] + [j < cumulative_traces for j in range(sum(row_trace_counts))]},
                     {"title": f"LS4 Observing Plan through {row['target']}"},
                 ],
                 label=f"{i + 1}: {row['target']}"
             ))
 
-        fig.data[len(legend_traces)].visible = True
+        for trace_index in range(len(legend_traces), len(legend_traces) + row_trace_counts[0]):
+            fig.data[trace_index].visible = True
 
         fig.update_layout(sliders=[dict(
             active=0,

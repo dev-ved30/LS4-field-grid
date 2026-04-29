@@ -121,9 +121,9 @@ def plot_visible_fields(fields, visibility):
     )
     fig.show()
 
-def plot_obs_plan(plan, region):
+def plot_obs_plan(plan):
 
-    field_grid = pd.read_csv("LS4_field_grid.csv")
+    field_grid = pd.read_csv(LS4_field_grid_path)
     vertices = SkyCoord(
         ra=field_grid["ra_deg"].to_numpy() * u.deg,
         dec=field_grid["dec_deg"].to_numpy() * u.deg,
@@ -135,13 +135,7 @@ def plot_obs_plan(plan, region):
     if "target" not in plan.columns or "start time (UTC)" not in plan.columns:
         raise ValueError("plan must include 'target' and 'start time (UTC)' columns")
 
-    block_column = None
-    if "block_numer" in plan.columns:
-        block_column = "block_numer"
-    elif "block_number" in plan.columns:
-        block_column = "block_number"
-    else:
-        raise ValueError("plan must include 'block_numer' or 'block_number' for coloring")
+    block_column = "block_number"
 
     plan = plan[plan["target"].astype(str) != "TransitionBlock"].copy()
     plan["start time (UTC)"] = pd.to_datetime(plan["start time (UTC)"])
@@ -165,7 +159,7 @@ def plot_obs_plan(plan, region):
             lat=[None],
             mode="lines",
             line=dict(width=2.5, color=parity_colors["Even"]),
-            name="Even blocks",
+            name="First Pointing",
             visible="legendonly",
             hoverinfo="skip",
             showlegend=True,
@@ -175,7 +169,7 @@ def plot_obs_plan(plan, region):
             lat=[None],
             mode="lines",
             line=dict(width=2.5, color=parity_colors["Odd"]),
-            name="Odd blocks",
+            name="Revisit with dither",
             visible="legendonly",
             hoverinfo="skip",
             showlegend=True,
@@ -187,8 +181,11 @@ def plot_obs_plan(plan, region):
 
     for _, row in plan.iterrows():
         target_name = str(row["target"])
+        if "dither" in target_name.lower():
+            target_name = target_name.replace("_dither", "").strip()
         target_matches = names[names == target_name]
         if target_matches.empty:
+            print("skipping:", target_name)
             continue
 
         target_idx = target_matches.index[0]

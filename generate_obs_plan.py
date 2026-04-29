@@ -2,6 +2,7 @@ import time
 import astroplan
 import argparse
 
+from networkx import efficiency
 import pandas as pd
 
 from astroplan.target import FixedTarget
@@ -13,7 +14,7 @@ from astroplan import ObservingBlock
 
 from visualizations import plot_obs_plan
 from constants import *
-from build_field_grid import region
+from tqdm import tqdm
 
 # Get the current time
 current_time = Time.now() # Fix this to a specific time for testing, e.g. Time("2024-06-01 00:00:00")
@@ -48,6 +49,29 @@ def skip_polar_fields(fields):
     
     return unskipped_fields
 
+def compute_theoretical_max_images_per_night(night_start, night_end):
+
+    night_duration = (night_end - night_start).to_value(u.second) * u.second
+    total_time_per_field = exp + read_out
+    theoretical_max_fields = (night_duration / total_time_per_field).to_value()
+
+    return theoretical_max_fields
+
+def compute_time_efficiency(obs_plan, night_start, night_end):
+
+    total_night_duration = (night_end - night_start).to_value(u.minute) * u.minute
+
+    # unused time
+    unused_time = obs_plan[obs_plan['target'] == 'Unused Time']
+    total_unused_time = unused_time['duration (minutes)'].sum() * u.minute
+
+    efficiency = (total_night_duration - total_unused_time) / total_night_duration
+
+    print(f"Total night duration: {total_night_duration.to_value(u.hour):.2f} hours")
+    print(f"Total unused time: {total_unused_time.to_value(u.hour):.2f} hours")
+    print(f"Time efficiency: {efficiency:.2%}")
+
+    return efficiency
 
 def get_visible_fields(night_start, night_end):
     """Get the list of fields that are currently visible from La Silla Observatory."""
@@ -85,6 +109,7 @@ def get_visible_fields(night_start, night_end):
 def get_obs_blocks(night_start, night_end):
 
     visible_fields = get_visible_fields(night_start, night_end)
+    print("==============================================================")
     print(len(visible_fields), "fields are visible tonight.")
 
     num_exposures = 1
@@ -129,7 +154,8 @@ def get_obs_blocks(night_start, night_end):
                                             time_per_exposure=exp, 
                                             number_exposures=num_exposures, 
                                             readout_time=read_out,
-                                            constraints=global_constraints)
+                                            constraints=global_constraints,
+                                            configuration={"dither": False}) # add a configuration parameter to indicate whether this block is a dither or not. This can be used later for visualization and analysis.
             
             # add target to this block
             block.append(b)
@@ -143,12 +169,14 @@ def get_obs_blocks(night_start, night_end):
                                             time_per_exposure=exp,
                                             number_exposures=num_exposures,
                                             readout_time=read_out,
-                                            constraints=global_constraints)
+                                            constraints=global_constraints,
+                                            configuration={"dither": True})
             block_dither.append(b_dither)
 
             # remove target from the list of visible fields to avoid scheduling it again
             visible_fields.remove(target)
 
+        print(f"{len(block) + len(block_dither)} images slated for block {block_number} and {block_number + 1}. {len(visible_fields)} fields remaining to schedule.")
 
         current_time += 2 * block_duration
         block_number += 2
@@ -162,21 +190,18 @@ def get_obs_blocks(night_start, night_end):
 
         if len(visible_fields) == 0:
             break
-
-        print(f"{len(block)} fields scheduled in this block. {len(visible_fields)} fields remaining to schedule.")
     
     return blocks, times
     
     
 def get_obs_plan(night_start, night_end, output_path):
 
+    print("Generating observing plan for the night of", night_start.to_datetime().strftime("%Y-%m-%d"), "to", night_end.to_datetime().strftime("%Y-%m-%d"))
     blocks, times = get_obs_blocks(night_start, night_end)
     transitioner = Transitioner(slew_rate)
     combined_obs_plan = []
 
-    for i, (b, t) in enumerate(zip(blocks, times)):
-
-        print(f"Scheduling block {i} from {t[0]} to {t[1]}...")
+    for i, (b, t) in tqdm(enumerate(zip(blocks, times)), total=len(blocks), desc="Scheduling blocks"):
 
         sequential_schedule = Schedule(t[0], t[1])
         seq_scheduler = SequentialScheduler(constraints = global_constraints,
@@ -188,7 +213,7 @@ def get_obs_plan(night_start, night_end, output_path):
 
 
     combined_obs_plan = pd.concat(combined_obs_plan, ignore_index=True)
-    print(combined_obs_plan)
+    #print(combined_obs_plan)
 
     # remove the deg from ra and dec columns while preserving blank rows
     combined_obs_plan['ra'] = pd.to_numeric(
@@ -202,12 +227,16 @@ def get_obs_plan(night_start, night_end, output_path):
 
     combined_obs_plan['ra_hr'] = combined_obs_plan['ra'] * u.deg.to(u.hourangle)
 
+    print("Saving observing plan to", output_path)
     combined_obs_plan.to_csv(output_path, index=False)
 
+    print("Done!\n==============================================================")
+    images_scheduled = sum(len(b) for b in blocks)
+    max_images_possible = compute_theoretical_max_images_per_night(night_start, night_end)
+    print(f"{images_scheduled} images scheduled out of {max_images_possible:.0f} possible images for the night based on exposure time and readout time.")
+    print("Imaging efficiency: {:.2f}%".format(100 * images_scheduled / max_images_possible))
 
-    plot_obs_plan(combined_obs_plan)
-    
-
+    compute_time_efficiency(combined_obs_plan, night_start, night_end)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import healpy as hp
 import plotly.graph_objects as go
 
 from astropy import units as u
@@ -351,4 +352,57 @@ def plot_obs_plan(plan):
     fig.show()
 
 
-    
+def plot_coverage_map(observed_mask, title="Observed Sky Area"):
+    """Plot a HEALPix coverage map with Plotly.
+
+    Parameters
+    ----------
+    observed_mask : array-like
+        HEALPix mask or visit-count map. Values greater than zero are shown.
+    """
+
+    m = np.asarray(observed_mask)
+    observed_pixels = np.flatnonzero(m > 0)
+
+    fig = go.Figure()
+
+    if observed_pixels.size > 0:
+        nside = hp.npix2nside(m.size)
+        theta, phi = hp.pix2ang(nside, observed_pixels)
+        lon = np.degrees(phi)
+        lon = ((lon + 180) % 360) - 180
+        lat = 90.0 - np.degrees(theta)
+
+        fig.add_trace(go.Scattergeo(
+            lon=lon,
+            lat=lat,
+            mode="markers",
+            marker=dict(
+                size=4,
+                color=m[observed_pixels],
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Visits"),
+            ),
+            hovertemplate="Lon: %{lon:.2f}°<br>Lat: %{lat:.2f}°<br>Visits: %{marker.color}<extra></extra>",
+            showlegend=False,
+        ))
+
+    fig.update_layout(
+        title=title,
+        height=700,
+        margin=dict(l=20, r=20, t=60, b=20),
+        hovermode="closest",
+        geo=dict(
+            projection_type="mollweide",
+            showland=False,
+            showcountries=False,
+            showcoastlines=False,
+            showframe=False,
+            lonaxis=dict(showgrid=True, gridwidth=0.5),
+            lataxis=dict(showgrid=True, gridwidth=0.5),
+        ),
+    )
+
+    fig.show(config={"scrollZoom": True, "displayModeBar": True})
+    return fig

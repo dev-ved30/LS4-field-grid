@@ -23,7 +23,7 @@ min_declination = -60*u.deg  # Minimum declination limit for fields
 max_airmass = 1.6
 block_duration = 30*u.minute
 
-tolerance = 4 # adding some time to account for slew overheads and other inefficiencies. This is a simple heuristic and can be optimized further.
+tolerance = 3 # adding some time to account for slew overheads and other inefficiencies. This is a simple heuristic and can be optimized further.
 fields_per_block = int(block_duration/(exp + read_out)) - tolerance # Number of fields that can be observed in a 30 minute block, accounting for exposure time and readout time. This is a simple calculation and can be optimized further by considering slews and other factors.
 
 # Universal constraints for all targets

@@ -2,8 +2,9 @@ import time
 import astroplan
 import argparse
 
-from networkx import efficiency
 import pandas as pd
+import healpy as hp
+import numpy as np
 
 from astroplan.target import FixedTarget
 from astropy import units as u
@@ -12,7 +13,6 @@ from astropy.time import Time
 from astroplan.scheduling import Transitioner, SequentialScheduler, Schedule
 from astroplan import ObservingBlock
 
-from visualizations import plot_obs_plan
 from constants import *
 from tqdm import tqdm
 
@@ -73,6 +73,87 @@ def compute_time_efficiency(obs_plan, night_start, night_end):
 
     return efficiency
 
+def compute_theoretical_max_area_per_night(night_start, night_end):
+
+    theoretical_max_fields = compute_theoretical_max_images_per_night(night_start, night_end)
+    area_per_field = FOV_width * FOV_length
+    theoretical_max_area = theoretical_max_fields * area_per_field
+    return theoretical_max_area.to_value(u.deg**2) / 2 # divide by 2 to account for the dithered pointings that cover some of the same area
+
+def compute_union_area(obs_plan, nside=2048):
+    """
+    Compute the union area (deg^2) of rectangular FoVs on the sky.
+
+    Parameters
+    ----------
+    pointings_ra : array-like
+        RA of pointings (degrees)
+    pointings_dec : array-like
+        Dec of pointings (degrees)
+    fov_width_deg : float
+        Width of FoV (degrees, along RA direction in tangent plane)
+    fov_height_deg : float
+        Height of FoV (degrees, along Dec direction in tangent plane)
+    nside : int
+        HEALPix resolution (higher = more accurate, slower)
+
+    Returns
+    -------
+    area_deg2 : float
+        Total union area in square degrees
+    """
+    df = obs_plan[(obs_plan['target'] != 'Unused Time') & (obs_plan['target'] != 'TransitionBlock')]
+    pointings_ra, pointings_dec = df['ra'].to_numpy(), df['dec'].to_numpy()
+
+    npix = hp.nside2npix(nside)
+    observed = np.zeros(npix, dtype=bool)
+    visits = np.zeros(npix, dtype=int)
+
+    half_w =  FOV_width.to(u.deg).value/ 2
+    half_h = FOV_length.to(u.deg).value/ 2
+
+    for ra, dec in zip(pointings_ra, pointings_dec):
+        center = SkyCoord(ra=ra*u.deg, dec=dec*u.deg, frame='icrs')
+
+        # Define rectangle corners in tangent plane
+        offsets = [
+            (-half_w, -half_h),
+            ( half_w, -half_h),
+            ( half_w,  half_h),
+            (-half_w,  half_h),
+        ]
+
+        corners = []
+        for dx, dy in offsets:
+            corner = center.spherical_offsets_by(dx*u.deg, dy*u.deg)
+            corners.append(corner)
+
+
+        # Convert to HEALPix vectors
+        vecs = np.array([
+            hp.ang2vec(np.radians(90 - c.dec.deg),
+                       np.radians(c.ra.deg))
+            for c in corners
+        ])
+
+        # Fill polygon
+        pixels = hp.query_polygon(nside, vecs)
+        observed[pixels] = True
+        visits[pixels] += 1
+
+    # Compute area
+    pixel_area_sr = hp.nside2pixarea(nside)
+    total_area_sr = observed.sum() * pixel_area_sr
+    total_area_deg2 = total_area_sr * (180/np.pi)**2
+
+    # maximum are possible for the night
+    max_area_deg2 = compute_theoretical_max_area_per_night(night_start, night_end)
+
+
+    print(f"Maximum area possible for the night based on exposure time and readout time: {max_area_deg2:.2f} deg^2")
+    print(f"Total observed area: {total_area_deg2:.2f} deg^2")
+    print(f"Area efficiency: {100 * total_area_deg2 / max_area_deg2:.2f}%")
+
 def get_visible_fields(night_start, night_end):
     """Get the list of fields that are currently visible from La Silla Observatory."""
 
@@ -122,71 +203,103 @@ def get_obs_blocks(night_start, night_end):
     block_number = 0
     while current_time < night_end:
 
-        # TODO: fix this since it currently wastes the last bit if the night
-        if night_end - current_time < 2*block_duration:
-            break
-
         block = []
         block_dither = []
 
-        # Check the observability of the fields for the duration of the block and the revisit with dither.
-        block_durations = [current_time, current_time + block_duration]
-        revisit_duration = [current_time + block_duration, current_time + 2*block_duration]
-
-        # Only schedule fields that are observable for the entire block duration and the revisit duration.
-        fields_visible_for_revisit = []
-        for f in visible_fields:
-            if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0] and astroplan.is_observable(global_constraints, LS4, [f], time_range=revisit_duration)[0]:
-                fields_visible_for_revisit.append(f)    
-        
-        # sort by angular distance from the first field to minimize slews
-        if len(blocks) > 0:
-            starting_point = blocks[-1][0].target # for subsequent blocks, sort by distance from the last scheduled field to minimize slews
-        else:
-            fields_visible_for_revisit.sort(key=lambda f: f.coord.ra)
-            starting_point = fields_visible_for_revisit[0] # for the first block, just sort by RA
-        
-        fields_visible_for_revisit.sort(key=lambda f: f.coord.separation(starting_point.coord))
-
-        for target in fields_visible_for_revisit[:fields_per_block]:
-            b = ObservingBlock.from_exposures(target, 
-                                            priority=1, 
-                                            time_per_exposure=exp, 
-                                            number_exposures=num_exposures, 
-                                            readout_time=read_out,
-                                            constraints=global_constraints,
-                                            configuration={"dither": False}) # add a configuration parameter to indicate whether this block is a dither or not. This can be used later for visualization and analysis.
+        # TODO: fix this since it currently wastes the last bit if the night
+        if night_end - current_time < 2*block_duration:
             
-            # add target to this block
-            block.append(b)
+            print(f"Less than {2*block_duration} remaining in the night. Scheduling the remaining time as one block with all visible fields that are observable for the rest of the night.")
+            
+            num_fields_feasible = int((night_end - current_time) / (exp + read_out)) - tolerance
+            block_durations = [current_time, night_end]
+            final_fields = []
+            for f in visible_fields:
+                if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0]:
+                    final_fields.append(f)
 
-            # add a dither to the block by offsetting the target coordinates by half a field in RA and Dec. This is a simple dither pattern that can be improved with more sophisticated patterns.
-            dithered_target = FixedTarget(name=target.name + "_dither",
-                                        coord=SkyCoord(ra=target.coord.ra + half_field_offset_ra,
-                                                        dec=target.coord.dec + half_field_offset_dec))
-            b_dither = ObservingBlock.from_exposures(dithered_target,
-                                            priority=1,
-                                            time_per_exposure=exp,
-                                            number_exposures=num_exposures,
-                                            readout_time=read_out,
-                                            constraints=global_constraints,
-                                            configuration={"dither": True})
-            block_dither.append(b_dither)
+            for target in final_fields[:num_fields_feasible]:
 
-            # remove target from the list of visible fields to avoid scheduling it again
-            visible_fields.remove(target)
+                b = ObservingBlock.from_exposures(target, 
+                                                priority=1, 
+                                                time_per_exposure=exp, 
+                                                number_exposures=num_exposures, 
+                                                readout_time=read_out,
+                                                constraints=global_constraints,
+                                                configuration={"dither": False}) # add a configuration parameter to indicate whether this block is a dither or not. This can be used later for visualization and analysis.
+                
+                # add target to this block
+                block.append(b)
+            
+            print(f"{len(block)} images slated for block {block_number}. {len(visible_fields) - len(block)} fields remaining that could not be scheduled due to time constraints.")
 
-        print(f"{len(block) + len(block_dither)} images slated for block {block_number} and {block_number + 1}. {len(visible_fields)} fields remaining to schedule.")
+            current_time = night_end
+            block_number += 1
 
-        current_time += 2 * block_duration
-        block_number += 2
+            # Add blocks for both the original pointing and the revisit with the dither.
+            blocks.append(block)
+            times.append(block_durations)
 
-        # Add blocks for both the original pointing and the revisit with the dither.
-        blocks.append(block)
-        blocks.append(block_dither)
+        else:
 
-        times.append(block_durations)
-        times.append(revisit_duration)
+            # Check the observability of the fields for the duration of the block and the revisit with dither.
+            block_durations = [current_time, current_time + block_duration]
+            revisit_duration = [current_time + block_duration, current_time + 2*block_duration]
+
+            # Only schedule fields that are observable for the entire block duration and the revisit duration.
+            fields_visible_for_revisit = []
+            for f in visible_fields:
+                if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_durations)[0] and astroplan.is_observable(global_constraints, LS4, [f], time_range=revisit_duration)[0]:
+                    fields_visible_for_revisit.append(f)    
+            
+            # sort by angular distance from the first field to minimize slews
+            if len(blocks) > 0:
+                starting_point = blocks[-1][0].target # for subsequent blocks, sort by distance from the last scheduled field to minimize slews
+            else:
+                fields_visible_for_revisit.sort(key=lambda f: f.coord.ra)
+                starting_point = fields_visible_for_revisit[0] # for the first block, just sort by RA
+            
+            fields_visible_for_revisit.sort(key=lambda f: f.coord.separation(starting_point.coord))
+
+            for target in fields_visible_for_revisit[:fields_per_block]:
+                b = ObservingBlock.from_exposures(target, 
+                                                priority=1, 
+                                                time_per_exposure=exp, 
+                                                number_exposures=num_exposures, 
+                                                readout_time=read_out,
+                                                constraints=global_constraints,
+                                                configuration={"dither": False}) # add a configuration parameter to indicate whether this block is a dither or not. This can be used later for visualization and analysis.
+                
+                # add target to this block
+                block.append(b)
+
+                # add a dither to the block by offsetting the target coordinates by half a field in RA and Dec. This is a simple dither pattern that can be improved with more sophisticated patterns.
+                dithered_target = FixedTarget(name=target.name + "_dither",
+                                            coord=SkyCoord(ra=target.coord.ra - half_field_offset_ra,
+                                                            dec=target.coord.dec - half_field_offset_dec))
+                b_dither = ObservingBlock.from_exposures(dithered_target,
+                                                priority=1,
+                                                time_per_exposure=exp,
+                                                number_exposures=num_exposures,
+                                                readout_time=read_out,
+                                                constraints=global_constraints,
+                                                configuration={"dither": True})
+                block_dither.append(b_dither)
+
+                # remove target from the list of visible fields to avoid scheduling it again
+                visible_fields.remove(target)
+
+            print(f"{len(block) + len(block_dither)} images slated for block {block_number} and {block_number + 1}. {len(visible_fields)} fields remaining to schedule.")
+
+            current_time += 2 * block_duration
+            block_number += 2
+
+            # Add blocks for both the original pointing and the revisit with the dither.
+            blocks.append(block)
+            blocks.append(block_dither)
+
+            times.append(block_durations)
+            times.append(revisit_duration)
 
         if len(visible_fields) == 0:
             break
@@ -237,6 +350,8 @@ def get_obs_plan(night_start, night_end, output_path):
     print("Imaging efficiency: {:.2f}%".format(100 * images_scheduled / max_images_possible))
 
     compute_time_efficiency(combined_obs_plan, night_start, night_end)
+    compute_theoretical_max_area_per_night(night_start, night_end)
+    compute_union_area(combined_obs_plan)
 
 
 if __name__ == "__main__":
@@ -244,7 +359,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     args = argument_parser()
-    mjd = args.mjd
+    mjd = args.mjd  - (0.5 * u.day) # turn this on at night
     night_start = LS4.twilight_evening_astronomical(Time(mjd, format='mjd'), which='next')
     night_end = LS4.twilight_morning_astronomical(Time(mjd, format='mjd'), which='next')
     

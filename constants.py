@@ -9,7 +9,7 @@ from astroplan.constraints import AirmassConstraint, TimeConstraint, AtNightCons
 LS4 = Observer.at_site("La Silla Observatory")
 
 # Telescope specs
-slew_rate = 0.8*u.deg/u.second * 100 # Slew rate in degrees per second
+slew_rate = 0.8*u.deg/u.second # Slew rate in degrees per second
 read_out = 40 * u.second # Readout time for LS4. This is often synced with the slews.
 exp = 60*u.second # Exposure time per pointing.
 
@@ -23,7 +23,7 @@ min_declination = -60*u.deg  # Minimum declination limit for fields
 max_airmass = 1.6
 block_duration = 30*u.minute
 
-tolerance = 1 # adding some time to account for slew overheads and other inefficiencies. This is a simple heuristic and can be optimized further.
+tolerance = 4 # adding some time to account for slew overheads and other inefficiencies. This is a simple heuristic and can be optimized further.
 fields_per_block = int(block_duration/(exp + read_out)) - tolerance # Number of fields that can be observed in a 30 minute block, accounting for exposure time and readout time. This is a simple calculation and can be optimized further by considering slews and other factors.
 
 # Universal constraints for all targets

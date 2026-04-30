@@ -166,6 +166,7 @@ def plot_obs_plan(plan):
     fig = go.Figure()
     scheduled_rows = []
     row_trace_counts = []
+    row_trace_starts = []
 
     legend_traces = [
         go.Scattergeo(
@@ -237,32 +238,101 @@ def plot_obs_plan(plan):
             trace_count += 1
 
         if trace_count > 0:
+            row_trace_starts.append(len(fig.data) - trace_count)
             scheduled_rows.append(row)
             row_trace_counts.append(trace_count)
 
     if scheduled_rows:
+        animation_duration = 300
         steps = []
-        cumulative_traces = 0
+        total_traces = len(fig.data)
+        scheduled_trace_total = total_traces - len(legend_traces)
         for i, row in enumerate(scheduled_rows):
-            cumulative_traces += row_trace_counts[i]
+            visible_trace_count = row_trace_starts[i] + row_trace_counts[i]
+            visibility = [True] * len(legend_traces) + [False] * scheduled_trace_total
+            for trace_index in range(len(legend_traces), visible_trace_count):
+                visibility[trace_index] = True
             steps.append(dict(
-                method="update",
+                method="animate",
                 args=[
-                    {"visible": ["legendonly", "legendonly"] + [j < cumulative_traces for j in range(sum(row_trace_counts))]},
-                    {"title": f"LS4 Observing Plan through {row['target']}"},
+                    [str(i)],
+                    {
+                        "mode": "immediate",
+                        "frame": {"duration": animation_duration, "redraw": True},
+                        "transition": {"duration": 0},
+                    },
                 ],
                 label=f"{i + 1}: {row['target']}"
             ))
 
+        initial_visibility = ["legendonly"] * len(legend_traces) + [False] * scheduled_trace_total
         for trace_index in range(len(legend_traces), len(legend_traces) + row_trace_counts[0]):
-            fig.data[trace_index].visible = True
+            initial_visibility[trace_index] = True
+        for trace_index, visible in enumerate(initial_visibility):
+            fig.data[trace_index].visible = visible
 
-        fig.update_layout(sliders=[dict(
-            active=0,
-            currentvalue={"prefix": "Schedule: "},
-            pad={"t": 50},
-            steps=steps,
-        )], legend=dict(title="Block parity"))
+        frames = []
+        for i, row in enumerate(scheduled_rows):
+            visible_trace_count = row_trace_starts[i] + row_trace_counts[i]
+            visibility = [True] * len(legend_traces) + [False] * scheduled_trace_total
+            for trace_index in range(len(legend_traces), visible_trace_count):
+                visibility[trace_index] = True
+            frame_data = [go.Scattergeo(visible=visibility[trace_index]) for trace_index in range(len(legend_traces), total_traces)]
+            frames.append(go.Frame(
+                name=str(i),
+                data=frame_data,
+                traces=list(range(len(legend_traces), total_traces)),
+                layout=go.Layout(title=f"LS4 Observing Plan through {row['target']}")
+            ))
+
+        fig.frames = frames
+
+        fig.update_layout(
+            sliders=[dict(
+                active=0,
+                currentvalue={"prefix": "Schedule: "},
+                pad={"t": 50},
+                steps=steps,
+            )],
+            updatemenus=[dict(
+                type="buttons",
+                direction="left",
+                showactive=False,
+                y=-0.20,
+                x=0.5,
+                xanchor="center",
+                yanchor="top",
+                buttons=[
+                    dict(
+                        label="Play",
+                        method="animate",
+                        args=[
+                            None,
+                            {
+                                "fromcurrent": True,
+                                "frame": {"duration": animation_duration, "redraw": True},
+                                "transition": {"duration": 0},
+                                "mode": "immediate",
+                            },
+                        ],
+                    ),
+                    dict(
+                        label="Pause",
+                        method="animate",
+                        args=[
+                            [None],
+                            {
+                                "frame": {"duration": 0, "redraw": False},
+                                "transition": {"duration": 0},
+                                "mode": "immediate",
+                            },
+                        ],
+                    ),
+                ],
+            )],
+            legend=dict(title="Block parity"),
+            margin=dict(b=180)
+        )
 
 
     fig.update_layout(

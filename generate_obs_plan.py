@@ -156,7 +156,7 @@ def compute_union_area(obs_plan, nside=2048):
     dithered_area_deg2 = dithered_area_sr * (180/np.pi)**2
 
     print(f"Maximum area possible for the night based on exposure time and readout time: {max_area_deg2:.2f} deg^2")
-    print(f"Total observed area: {total_area_deg2:.2f} deg^2")
+    print(f"Total observed area: {dithered_area_deg2:.2f} deg^2")
     print(f"Area efficiency: {100 * dithered_area_deg2 / max_area_deg2:.2f}%")
 
     return visits
@@ -196,10 +196,36 @@ def get_visible_fields(night_start, night_end):
 
 def snake_sort_fields(fields, starting_field):
 
-    sorted_fields = sorted(fields, key=lambda f: (f.coord.dec.deg, f.coord.ra.deg))
-    sorted_fields.sort(key=lambda f: f.coord.separation(starting_field.coord))
+    if not fields:
+        return []
 
-    return sorted_fields
+    def parse_grid_indices(field):
+        ra_idx, dec_idx = field.name.split("_")
+        return int(ra_idx), int(dec_idx)
+
+    rows = {}
+    for field in fields:
+        ra_idx, dec_idx = parse_grid_indices(field)
+        rows.setdefault(dec_idx, []).append((ra_idx, field))
+
+    ordered_fields = []
+    for row_number, dec_idx in enumerate(sorted(rows)):
+        row_fields = sorted(rows[dec_idx], key=lambda item: item[0])
+
+        if row_number % 2 == 1:
+            row_fields.reverse()
+
+        if row_number == 0 and starting_field in fields:
+            asc_fields = [field for _, field in row_fields]
+            desc_fields = list(reversed(asc_fields))
+            if desc_fields[0].coord.separation(starting_field.coord) < asc_fields[0].coord.separation(starting_field.coord):
+                ordered_fields.extend(desc_fields)
+            else:
+                ordered_fields.extend(asc_fields)
+        else:
+            ordered_fields.extend([field for _, field in row_fields])
+
+    return ordered_fields
 
 
 def get_obs_blocks(night_start, night_end):
@@ -242,18 +268,16 @@ def get_obs_blocks(night_start, night_end):
             # Only schedule fields that are observable in this block and in a visit.
             fields_visible_in_block = []
             for f in visible_fields:
-                if astroplan.is_observable(global_constraints, LS4, [f], time_range=[block_limits[0], block_limits[0] + 2 * block_duration])[0]:
+                dithered_field = FixedTarget(name=f"{f.name}_dither", 
+                                            coord=SkyCoord(ra=f.coord.ra-half_field_offset_ra, dec=f.coord.dec)) 
+                if astroplan.is_observable(global_constraints, LS4, [f], time_range=block_limits)[0] and \
+                   astroplan.is_observable(global_constraints, LS4, [dithered_field], time_range=[block_limits[1], block_limits[1] + block_duration])[0]:
                     fields_visible_in_block.append(f)
 
             fields_visible_in_block.sort(key=lambda f: f.coord.separation(starting_field.coord))
-            fields_to_observe = fields_visible_in_block[:num_images]
-            
-            # within a block, sort by angular separation
-            avg_ra = np.mean([f.coord.ra.deg for f in fields_to_observe]) * u.deg
-            avg_dec = np.mean([f.coord.dec.deg for f in fields_to_observe]) * u.deg
-            avg_coord = SkyCoord(ra=avg_ra, dec=avg_dec)
-            fields_to_observe.sort(key=lambda f: f.coord.separation(avg_coord))
-            
+            fields_to_observe = snake_sort_fields(fields_visible_in_block[:num_images], starting_field)
+            #fields_to_observe = fields_visible_in_block[:num_images]
+
         
         else:
 
@@ -264,7 +288,7 @@ def get_obs_blocks(night_start, night_end):
             fields_to_observe = []
             for f in fields_to_dither:
                 dithered_field = FixedTarget(name=f"{f.target.name}_dither", 
-                                            coord=SkyCoord(ra=f.target.coord.ra + half_field_offset_ra, dec=f.target.coord.dec))
+                                            coord=SkyCoord(ra=f.target.coord.ra-half_field_offset_ra, dec=f.target.coord.dec))
                 fields_to_observe.append(dithered_field)
 
 
@@ -293,7 +317,8 @@ def get_obs_blocks(night_start, night_end):
         # Add blocks and times to the list of blocks and times for the night
         blocks.append(block)
         times.append(block_limits)
-        starting_field = fields_to_observe[0] # update the starting field for the next block to be the first field in this block to minimize slews
+        if fields_to_observe:
+            starting_field = fields_to_observe[0] # update the starting field for the next block to be the first field in this block to minimize slews
 
         if len(visible_fields) == 0:
             break

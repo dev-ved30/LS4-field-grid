@@ -163,6 +163,10 @@ def plot_obs_plan(plan):
         "Even": "rgba(65,105,225,1.0)",
         "Odd": "rgba(220,20,60,1.0)",
     }
+    parity_legend = {
+        "Even": "first_pointing",
+        "Odd": "dither",
+    }
 
     fig = go.Figure()
     scheduled_rows = []
@@ -177,6 +181,7 @@ def plot_obs_plan(plan):
             line=dict(width=2.5, color=parity_colors["Even"]),
             name="First Pointing",
             visible="legendonly",
+            legendgroup=parity_legend["Even"],
             hoverinfo="skip",
             showlegend=True,
         ),
@@ -187,6 +192,7 @@ def plot_obs_plan(plan):
             line=dict(width=2.5, color=parity_colors["Odd"]),
             name="Revisit with dither",
             visible="legendonly",
+            legendgroup=parity_legend["Odd"],
             hoverinfo="skip",
             showlegend=True,
         ),
@@ -232,6 +238,7 @@ def plot_obs_plan(plan):
                 line=dict(width=1.8, color=block_color),
                 name=f"{block_parity} block",
                 showlegend=False,
+                legendgroup=parity_legend[block_parity],
                 visible=False,
                 hovertext=hover_text,
                 hoverinfo="text",
@@ -248,6 +255,7 @@ def plot_obs_plan(plan):
         steps = []
         total_traces = len(fig.data)
         scheduled_trace_total = total_traces - len(legend_traces)
+        total_images = len(scheduled_rows)
         for i, row in enumerate(scheduled_rows):
             visible_trace_count = row_trace_starts[i] + row_trace_counts[i]
             visibility = [True] * len(legend_traces) + [False] * scheduled_trace_total
@@ -291,21 +299,21 @@ def plot_obs_plan(plan):
         fig.update_layout(
             sliders=[dict(
                 active=0,
-                currentvalue={"prefix": "Schedule: "},
+                currentvalue={"prefix": f"Schedule ({total_images} images): "},
                 pad={"t": 50},
                 steps=steps,
             )],
             updatemenus=[dict(
                 type="buttons",
                 direction="left",
-                showactive=False,
+                showactive=True,
                 y=-0.20,
                 x=0.5,
                 xanchor="center",
                 yanchor="top",
                 buttons=[
                     dict(
-                        label="Play",
+                        label="Play / Pause",
                         method="animate",
                         args=[
                             None,
@@ -316,11 +324,7 @@ def plot_obs_plan(plan):
                                 "mode": "immediate",
                             },
                         ],
-                    ),
-                    dict(
-                        label="Pause",
-                        method="animate",
-                        args=[
+                        args2=[
                             [None],
                             {
                                 "frame": {"duration": 0, "redraw": False},
@@ -331,13 +335,13 @@ def plot_obs_plan(plan):
                     ),
                 ],
             )],
-            legend=dict(title="Block parity"),
+            legend=dict(title="Block parity", groupclick="togglegroup"),
             margin=dict(b=180)
         )
 
 
     fig.update_layout(
-        title="LS4 Observing Plan",
+        title=f"LS4 Observing Plan ({len(scheduled_rows)} images)",
         height=1000,
         geo=dict(
             projection_type="orthographic",

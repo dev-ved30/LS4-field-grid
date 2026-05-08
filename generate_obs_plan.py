@@ -151,13 +151,17 @@ def compute_union_area(obs_plan, nside=2048):
     # maximum are possible for the night
     max_area_deg2 = compute_theoretical_max_area_per_night(night_start, night_end)
 
-    # find the area covered by at least 2 visits to get a sense of the dithered coverage
-    dithered_area_sr = (visits >= 2).sum() * pixel_area_sr
-    dithered_area_deg2 = dithered_area_sr * (180/np.pi)**2
 
     print(f"Maximum area possible for the night based on exposure time and readout time: {max_area_deg2:.2f} deg^2")
-    print(f"Total observed area: {dithered_area_deg2:.2f} deg^2")
-    print(f"Area efficiency: {100 * dithered_area_deg2 / max_area_deg2:.2f}%")
+    print(f"Total observed area: {total_area_deg2:.2f} deg^2")
+    print(f"Area efficiency: {100 * total_area_deg2 / max_area_deg2:.2f}%")
+
+    # plot the ares covered by different number of visits to visualize the dither pattern and coverage
+    visit_counts = np.bincount(visits)
+    for i in range(1, min(10, len(visit_counts))):
+        area_sr = (visits == i).sum() * pixel_area_sr
+        area_deg2 = area_sr * (180/np.pi)**2
+        print(f"Area covered by {i} visits: {area_deg2:.2f} deg^2 ({100 * area_deg2 / max_area_deg2:.2f}%)")
 
     return visits
 
@@ -379,7 +383,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     args = argument_parser()
-    mjd = args.mjd  - (0.5 * u.day) # turn this on at night
+    mjd = args.mjd # - (0.5 * u.day) # turn this on at night
     night_start = LS4.twilight_evening_astronomical(Time(mjd, format='mjd'), which='next')
     night_end = LS4.twilight_morning_astronomical(Time(mjd, format='mjd'), which='next')
     

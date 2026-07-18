@@ -1,6 +1,7 @@
 import time
 import astroplan
 import argparse
+import sqlite3
 
 import pandas as pd
 import healpy as hp
@@ -20,6 +21,8 @@ from visualizations import plot_coverage_map
 
 # Get the current time
 current_time = Time.now() # Fix this to a specific time for testing, e.g. Time("2024-06-01 00:00:00")
+
+conn = sqlite3.connect(LS4_field_grid_db_path)
 
 def argument_parser():
 
@@ -169,7 +172,7 @@ def get_visible_fields(night_start, night_end):
     """Get the list of fields that are currently visible from La Silla Observatory."""
 
     # Read in the field grid
-    field_grid = pd.read_csv(LS4_field_grid_path)
+    field_grid = pd.read_sql_query("SELECT * FROM grid", conn)
 
     time_range = [night_start, night_end]
 
@@ -179,13 +182,16 @@ def get_visible_fields(night_start, night_end):
 
         field_coords = SkyCoord(ra=row["ra_deg"]*u.deg, dec=row["dec_deg"]*u.deg)
         field_target = FixedTarget(name=row["Field Name"], coord=field_coords)
+        field_target.last_scheduled_mjd = row["last_scheduled_mjd"]
+        field_target.program_id = row["program_id"]
         all_fields.append(field_target)
 
+    # NOTE: This is now taken care of in the build_field_grid.py script, so we don't need to do it here anymore. The field grid is already filtered to only include the primary pointings on the grid.
     # only get primary pointing on the grid
-    alternate_fields = skip_alternate_fields_in_dec(all_fields) 
+    # alternate_fields = skip_alternate_fields_in_dec(all_fields) 
 
     # skip the fields too close to the pole. These will probably be skipped due to high air mass anyway.
-    non_polar_fields = skip_polar_fields(alternate_fields)
+    non_polar_fields = skip_polar_fields(all_fields)
 
     # Check which fields are visible tonight
     is_visible = astroplan.is_observable(global_constraints, 
@@ -231,12 +237,62 @@ def snake_sort_fields(fields, starting_field):
 
     return ordered_fields
 
-
-def get_obs_blocks(night_start, night_end):
+def get_fields_to_schedule(night_start, night_end):
 
     visible_fields = get_visible_fields(night_start, night_end)
     print("==============================================================")
     print(len(visible_fields), "fields are visible tonight.")
+
+    N_total = compute_theoretical_max_images_per_night(night_start, night_end)
+    print(f"Theoretical maximum number of images possible tonight based on exposure time and readout time: {N_total:.0f}")
+
+    N_program_0 = int(0.25 * N_total)
+    N_program_1 = int(0.75 * N_total)
+    
+    print(f"Scheduling {N_program_0} Galactic fields (Program ID 0)")
+    print(f"Scheduling {N_program_1} Extragalactic fields (Program ID 1)")
+
+    program_0_fields = [f for f in visible_fields if f.program_id == 0]
+    program_1_fields = [f for f in visible_fields if f.program_id == 1]
+
+    # sort them by which ones were least recently scheduled, then by RA to minimize slews
+    program_0_fields.sort(key=lambda f: (f.last_scheduled_mjd, f.coord.ra))
+    program_1_fields.sort(key=lambda f: (f.last_scheduled_mjd, f.coord.ra))
+
+    # select the top N fields for each program
+    selected_program_0_fields = program_0_fields[:N_program_0]
+    selected_program_1_fields = program_1_fields[:N_program_1]
+
+    # combine the two lists and sort by RA to minimize slews
+    selected_fields = selected_program_0_fields + selected_program_1_fields
+    
+    # Cluster the fields spatially.
+    selected_fields.sort(key=lambda f: (f.coord.ra, f.coord.dec))
+
+    return selected_fields
+
+def update_last_scheduled_mjd(obs_plan):
+
+    # Read in the field grid
+    field_grid = pd.read_sql_query("SELECT * FROM grid", conn)
+
+    # Update the last_scheduled_mjd for each field in the obs_plan
+    for _, row in obs_plan.iterrows():
+        if row['target'] not in ['Unused Time', 'TransitionBlock']:
+            field_name = row['target']
+            mjd = row['start_time_mjd']
+            field_grid.loc[field_grid['Field Name'] == field_name, 'last_scheduled_mjd'] = mjd
+
+    # Write the updated field grid back to the database
+
+    print(field_grid)
+
+    field_grid.to_sql("grid", conn, if_exists="replace", index=False)
+
+
+def get_obs_blocks(night_start, night_end):
+
+    selected_fields = get_fields_to_schedule(night_start, night_end)
 
     num_images = default_fields_per_block
     block_duration = default_block_duration
@@ -247,8 +303,7 @@ def get_obs_blocks(night_start, night_end):
     ra_dither = -half_field_offset_ra
     dec_dither = 0*u.deg
 
-    visible_fields.sort(key=lambda f: f.coord.ra) # sort by RA 
-    starting_field = visible_fields[0]
+    starting_field = selected_fields[0]
 
     # Chop up the night into 30 minute black and assign 18 field to each block, alternating between the two configs to maximize the number of fields observed while minimizing slews. This is a simple heuristic that can be improved with more sophisticated scheduling algorithms.
     current_time = night_start
@@ -278,7 +333,7 @@ def get_obs_blocks(night_start, night_end):
 
         # Only schedule fields that are observable in this block and in a visit.
         fields_visible_in_block = []
-        for f in visible_fields:
+        for f in selected_fields:
             dithered_field = FixedTarget(name=f"{f.name}_dither", 
                                         coord=SkyCoord(ra=f.coord.ra+ra_dither, dec=f.coord.dec+dec_dither)) 
             if astroplan.is_observable(global_constraints, LS4, [f], time_range=first_visit_block_limits)[0] and \
@@ -301,7 +356,7 @@ def get_obs_blocks(night_start, night_end):
             # add target to this block
             first_visit_block.append(b)
 
-            visible_fields.remove(target)
+            selected_fields.remove(target)
 
             dithered_field = FixedTarget(name=f"{target.name}_dither", 
                 coord=SkyCoord(ra=target.coord.ra+ra_dither, dec=target.coord.dec+dec_dither)) 
@@ -315,7 +370,7 @@ def get_obs_blocks(night_start, night_end):
             second_visit_block.append(b_dither)
 
 
-        print(f"{len(first_visit_block)} images slated for block {block_number}. {len(visible_fields)} fields remaining to schedule.")
+        print(f"{len(first_visit_block)} images slated for block {block_number}. {len(selected_fields)} fields remaining to schedule.")
 
 
         # Add blocks and times to the list of blocks and times for the night
@@ -328,9 +383,10 @@ def get_obs_blocks(night_start, night_end):
         current_time = times[-1][-1]
         block_number += 2
 
-        starting_field = second_visit_block[0].target # update the starting field for the next block to be the first field in this block to minimize slews
+        if len(second_visit_block) > 0:
+            starting_field = second_visit_block[0].target # update the starting field for the next block to be the first field in this block to minimize slews
 
-        if len(visible_fields) == 0:
+        if len(selected_fields) == 0:
             break
     
     return blocks, times
@@ -350,7 +406,10 @@ def get_obs_plan(night_start, night_end, output_path):
                                             observer = LS4,
                                             transitioner = transitioner)
         seq_scheduler(b, sequential_schedule)   
-        combined_obs_plan.append(sequential_schedule.to_table(show_unused=True).to_pandas())
+        table = sequential_schedule.to_table(show_unused=True)
+        print(table.colnames)
+        table['start_time_mjd'] = Time(table['start time (UTC)'], scale='utc').mjd
+        combined_obs_plan.append(table.to_pandas())
         combined_obs_plan[-1]["block_number"] = i
 
 
@@ -372,6 +431,8 @@ def get_obs_plan(night_start, night_end, output_path):
     print("Saving observing plan to", output_path)
     combined_obs_plan.to_csv(output_path, index=False)
 
+    update_last_scheduled_mjd(combined_obs_plan)
+
     print("Done!\n==============================================================")
     images_scheduled = sum(len(b) for b in blocks)
     max_images_possible = compute_theoretical_max_images_per_night(night_start, night_end)
@@ -389,7 +450,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     args = argument_parser()
-    mjd = args.mjd # - (0.5 * u.day) # turn this on at night
+    mjd = args.mjd  - (0.5 * u.day) # turn this on at night
     night_start = LS4.twilight_evening_astronomical(Time(mjd, format='mjd'), which='next')
     night_end = LS4.twilight_morning_astronomical(Time(mjd, format='mjd'), which='next')
     

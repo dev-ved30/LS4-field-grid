@@ -38,3 +38,4 @@ half_field_offset_dec = FOV_width/2
 region = RectangleSkyRegion(SkyCoord(0 * u.deg, 0 * u.deg), FOV_length, FOV_width, angle=90*u.deg)
 
 LS4_field_grid_path = "assets/LS4_field_grid.csv"
+LS4_field_grid_db_path = "assets/LS4_field_grid.db"

@@ -2,7 +2,7 @@ from astroplan import Observer
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from regions import RectangleSkyRegion
-from astroplan.constraints import AirmassConstraint, TimeConstraint, AtNightConstraint
+from astroplan.constraints import AirmassConstraint, TimeConstraint, AtNightConstraint, MoonSeparationConstraint
 
 # WARNING: This file contains constants and parameters for the LS4 field grid and observing plan. Be cautious when modifying these values, as they will affect the entire workflow.
 
@@ -28,7 +28,8 @@ default_fields_per_block = int(default_block_duration/(exp + read_out)) - tolera
 
 # Universal constraints for all targets
 global_constraints = [AirmassConstraint(max=max_airmass),
-                      AtNightConstraint.twilight_civil()]
+                      AtNightConstraint.twilight_civil(), 
+                      MoonSeparationConstraint(min=15*u.deg),]
 
 half_field_offset_ra = FOV_length/2
 half_field_offset_dec = FOV_width/2

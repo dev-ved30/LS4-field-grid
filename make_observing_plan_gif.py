@@ -30,6 +30,7 @@ MJD_UNIX_EPOCH = 40587.0
 
 @dataclass(frozen=True)
 class Pointing:
+    target: str
     start_mjd: float
     end_mjd: float
     ra: float
@@ -85,6 +86,7 @@ def read_plan(path: Path) -> list[Pointing]:
                 end_utc = datetime.fromisoformat(row["end time (UTC)"])
                 start_mjd = float(row["start_time_mjd"]) if row.get("start_time_mjd") else utc_to_mjd(start_utc)
                 result.append(Pointing(
+                    target=row["target"],
                     start_mjd=start_mjd,
                     end_mjd=start_mjd + (end_utc - start_utc).total_seconds() / 86400.0,
                     ra=float(row["ra"]), dec=float(row["dec"]),
@@ -151,10 +153,15 @@ def draw_fov(draw: ImageDraw.ImageDraw, pointing: Pointing, center_ra: float, wi
 
 def load_font(size: int) -> ImageFont.ImageFont:
     """Use a scalable font when Pillow provides one, with a safe fallback."""
-    try:
-        return ImageFont.truetype("DejaVuSans.ttf", size=size)
-    except OSError:
-        return ImageFont.load_default()
+    for font_path in (
+        "/System/Library/Fonts/Supplemental/Verdana.ttf",
+        "DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 
 def draw_graticule(draw: ImageDraw.ImageDraw, center_ra: float, width: int, height: int,
@@ -190,7 +197,9 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
                frame_number: int, frame_count: int, width: int, height: int) -> Image.Image:
     image = Image.new("RGB", (width, height), "#101820")
     draw = ImageDraw.Draw(image)
-    title_font = load_font(28)
+    title_font = load_font(30)
+    time_font = load_font(40)
+    lst_font = load_font(30)
     label_font = load_font(21)
     timestamp = mjd_to_utc(timestamp_mjd)
     center_ra = local_sidereal_time(timestamp_mjd)
@@ -205,13 +214,14 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
                  "#e652a0" if pointing.dither else "#44b8e8", 2)
     draw_la_silla_marker(draw, center_ra, width, height, label_font)
 
-    title = (f"LS4 observing plan - {timestamp:%Y-%m-%d %H:%M UTC} "
-             f"(MJD {timestamp_mjd:.5f})  frame {frame_number}/{frame_count}")
-    draw.text((MARGIN, 16), title, fill="#f2f6f9", font=title_font)
+    draw.text((MARGIN, 14), f"LS4 observing plan   frame {frame_number}/{frame_count}",
+              fill="#f2f6f9", font=title_font)
+    draw.text((MARGIN, 49), f"{timestamp:%Y-%m-%d %H:%M UTC}   MJD {timestamp_mjd:.5f}",
+              fill="#f2f6f9", font=time_font)
     draw.text((MARGIN, height - 28),
               "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith",
               fill="#d4dce3", font=label_font)
-    draw.text((width - 295, 20), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=label_font)
+    draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
     return image
 
 

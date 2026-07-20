@@ -4,7 +4,9 @@
 Frames are sampled through the selected plan.  The map is centered on La Silla's local
 sidereal time at the frame timestamp, so the celestial sphere moves overhead.
 Every scheduled pointing is drawn as an LS4 field-of-view outline: first
-pointings are cyan and dithered revisits are magenta.
+pointings are cyan and dithered revisits are magenta. The Milky Way's galactic
+plane is drawn in the background so you can see at a glance whether the survey
+is tracking through/around it as expected.
 """
 
 from __future__ import annotations
@@ -26,6 +28,12 @@ LA_SILLA_LONGITUDE_DEG = -70.7367
 LA_SILLA_LATITUDE_DEG = -29.2612
 MARGIN = 70
 MJD_UNIX_EPOCH = 40587.0
+
+# J2000 galactic-pole/node parameters used to convert galactic (l, b) to
+# equatorial (RA, Dec) without requiring an extra astronomy dependency.
+GALACTIC_NGP_RA_DEG = 192.859508
+GALACTIC_NGP_DEC_DEG = 27.128336
+GALACTIC_NCP_LON_DEG = 122.932
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,8 @@ def parse_args() -> argparse.Namespace:
                         help="milliseconds per GIF frame (default: 250)")
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1200)
+    parser.add_argument("--no-galaxy", action="store_true",
+                        help="omit the galactic-plane overlay")
     return parser.parse_args()
 
 
@@ -106,6 +116,23 @@ def local_sidereal_time(mjd: float) -> float:
     return (gmst + LA_SILLA_LONGITUDE_DEG) % 360.0
 
 
+def galactic_to_equatorial(l_deg: float, b_deg: float) -> tuple[float, float]:
+    """Convert J2000 galactic (l, b) in degrees to equatorial (RA, Dec) in degrees."""
+    l = math.radians(l_deg)
+    b = math.radians(b_deg)
+    ra_ngp = math.radians(GALACTIC_NGP_RA_DEG)
+    dec_ngp = math.radians(GALACTIC_NGP_DEC_DEG)
+    l_ncp = math.radians(GALACTIC_NCP_LON_DEG)
+
+    sin_dec = math.sin(b) * math.sin(dec_ngp) + math.cos(b) * math.cos(dec_ngp) * math.cos(l_ncp - l)
+    dec = math.asin(max(-1.0, min(1.0, sin_dec)))
+
+    y = math.cos(b) * math.sin(l_ncp - l)
+    x = math.cos(dec_ngp) * math.sin(b) - math.sin(dec_ngp) * math.cos(b) * math.cos(l_ncp - l)
+    ra = math.degrees(ra_ngp + math.atan2(y, x))
+    return ra % 360.0, math.degrees(dec)
+
+
 def mollweide(ra: float, dec: float, center_ra: float) -> tuple[float, float]:
     """Return normalized Mollweide coordinates in the range x [-2, 2], y [-1, 1]."""
     longitude = math.radians(((ra - center_ra + 180) % 360) - 180)
@@ -151,6 +178,42 @@ def draw_fov(draw: ImageDraw.ImageDraw, pointing: Pointing, center_ra: float, wi
             draw.line((start, end), fill=color, width=line_width)
 
 
+def draw_galactic_plane(draw: ImageDraw.ImageDraw, center_ra: float, width: int, height: int,
+                        label_font: ImageFont.ImageFont) -> None:
+    """Draw a soft band around the galactic plane plus its centerline and center marker."""
+    band_color = "#2e2140"
+    line_color = "#8a63c4"
+
+    # Filled +-10 deg latitude band, built from small quads so we can skip any
+    # quad that would otherwise be stretched across the Mollweide seam.
+    l_step = 4
+    longitudes = list(range(0, 361, l_step))
+    for l0, l1 in zip(longitudes, longitudes[1:]):
+        quad = []
+        for l, b in ((l0, -10), (l1, -10), (l1, 10), (l0, 10)):
+            ra, dec = galactic_to_equatorial(l, b)
+            quad.append(project(ra, dec, center_ra, width, height))
+        xs = [point[0] for point in quad]
+        if max(xs) - min(xs) < width / 2:
+            draw.polygon(quad, fill=band_color)
+
+    # Solid centerline at b = 0.
+    line_points = []
+    for l in range(0, 361, 2):
+        ra, dec = galactic_to_equatorial(l, 0)
+        line_points.append(project(ra, dec, center_ra, width, height))
+    for start, end in zip(line_points, line_points[1:]):
+        if abs(start[0] - end[0]) < width / 2:
+            draw.line((start, end), fill=line_color, width=2)
+
+    # Galactic center marker (l=0, b=0).
+    gc_ra, gc_dec = galactic_to_equatorial(0, 0)
+    x, y = project(gc_ra, gc_dec, center_ra, width, height)
+    radius = 5
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=line_color)
+    draw.text((x + 10, y - 10), "Galactic center", fill=line_color, font=label_font)
+
+
 def load_font(size: int) -> ImageFont.ImageFont:
     """Use a scalable font when Pillow provides one, with a safe fallback."""
     for font_path in (
@@ -194,7 +257,7 @@ def draw_la_silla_marker(draw: ImageDraw.ImageDraw, center_ra: float, width: int
 
 
 def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timestamp_mjd: float,
-               frame_number: int, frame_count: int, width: int, height: int) -> Image.Image:
+               frame_number: int, frame_count: int, width: int, height: int, show_galaxy: bool) -> Image.Image:
     image = Image.new("RGB", (width, height), "#101820")
     draw = ImageDraw.Draw(image)
     title_font = load_font(30)
@@ -203,6 +266,10 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
     label_font = load_font(21)
     timestamp = mjd_to_utc(timestamp_mjd)
     center_ra = local_sidereal_time(timestamp_mjd)
+
+    if show_galaxy:
+        draw_galactic_plane(draw, center_ra, width, height, label_font)
+
     draw_graticule(draw, center_ra, width, height, label_font)
 
     for ra, dec in grid:
@@ -218,9 +285,10 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
               fill="#f2f6f9", font=title_font)
     draw.text((MARGIN, 49), f"{timestamp:%Y-%m-%d %H:%M UTC}   MJD {timestamp_mjd:.5f}",
               fill="#f2f6f9", font=time_font)
-    draw.text((MARGIN, height - 28),
-              "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith",
-              fill="#d4dce3", font=label_font)
+    caption = "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith"
+    if show_galaxy:
+        caption += "   purple: galactic plane (+-10 deg)"
+    draw.text((MARGIN, height - 28), caption, fill="#d4dce3", font=label_font)
     draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
     return image
 
@@ -253,7 +321,8 @@ def main() -> None:
     frames = []
     for frame_number, timestamp_mjd in enumerate(timeline, start=1):
         current = [pointing for pointing in plan if pointing.end_mjd <= timestamp_mjd]
-        frames.append(make_frame(grid, current, timestamp_mjd, frame_number, len(timeline), args.width, args.height))
+        frames.append(make_frame(grid, current, timestamp_mjd, frame_number, len(timeline),
+                                  args.width, args.height, not args.no_galaxy))
         print(f"Added frame {frame_number}/{len(timeline)}: {mjd_to_utc(timestamp_mjd):%Y-%m-%d %H:%M UTC}")
 
     output = args.output or Path(f"{args.plan.stem}.gif")

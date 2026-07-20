@@ -4,6 +4,8 @@
 The selected observing plan is sampled through time. Field-of-view outlines
 are colored with the Viridis scale according to the number of visits to each
 base field; a dithered visit counts as another visit to its original field.
+The Milky Way's galactic plane is drawn in the background so you can see at a
+glance whether the survey is tracking through/around it as expected.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from make_observing_plan_gif import (
     MARGIN,
     Pointing,
     draw_fov,
+    draw_galactic_plane,
     draw_graticule,
     draw_la_silla_marker,
     frame_times,
@@ -49,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=int, default=250)
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1200)
+    parser.add_argument("--no-galaxy", action="store_true",
+                        help="omit the galactic-plane overlay")
     return parser.parse_args()
 
 
@@ -82,7 +87,8 @@ def draw_colorbar(draw: ImageDraw.ImageDraw, maximum: int, width: int, height: i
 
 
 def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timestamp_mjd: float,
-               frame_number: int, frame_count: int, max_visits: int, width: int, height: int) -> Image.Image:
+               frame_number: int, frame_count: int, max_visits: int, width: int, height: int,
+               show_galaxy: bool) -> Image.Image:
     image = Image.new("RGB", (width, height), "#101820")
     draw = ImageDraw.Draw(image)
     title_font = load_font(30)
@@ -91,6 +97,9 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
     label_font = load_font(21)
     timestamp = mjd_to_utc(timestamp_mjd)
     center_ra = local_sidereal_time(timestamp_mjd)
+
+    if show_galaxy:
+        draw_galactic_plane(draw, center_ra, width, height, label_font)
 
     draw_graticule(draw, center_ra, width, height, label_font)
     for ra, dec in grid:
@@ -128,7 +137,7 @@ def main() -> None:
     for frame_number, timestamp_mjd in enumerate(timeline, start=1):
         observed = [pointing for pointing in plan if pointing.end_mjd <= timestamp_mjd]
         frames.append(make_frame(grid, observed, timestamp_mjd, frame_number, len(timeline), max_visits,
-                                 args.width, args.height))
+                                 args.width, args.height, not args.no_galaxy))
         print(f"Added frame {frame_number}/{len(timeline)}: {mjd_to_utc(timestamp_mjd):%Y-%m-%d %H:%M UTC}")
 
     output = args.output or Path(f"{args.plan.stem}_visits.gif")

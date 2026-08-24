@@ -19,6 +19,14 @@ from tqdm import tqdm
 
 from visualizations import plot_coverage_map
 
+import warnings
+from astropy.coordinates import NonRotationTransformationWarning
+
+warnings.filterwarnings(
+    "ignore",
+    category=NonRotationTransformationWarning
+)
+
 # Get the current time
 current_time = Time.now() # Fix this to a specific time for testing, e.g. Time("2024-06-01 00:00:00")
 
@@ -27,7 +35,7 @@ conn = sqlite3.connect(LS4_field_grid_db_path)
 def argument_parser():
 
     parser = argparse.ArgumentParser(description="Generate an observing plan for LS4 based on the field grid and current visibility.")
-    parser.add_argument('--mjd', required=False, type=float, default=current_time, help="MJD for which to generate the observing plan. If not provided, the current time will be used.")
+    parser.add_argument('--mjd', required=False, default=None, help="MJD for which to generate the observing plan. If not provided, the current time will be used.")
     parser.add_argument("--output", required=False, type=str, default=None, help="Path to save the generated observing plan CSV file. Default will just save to plans/yyyymmdd.csv")
     return parser.parse_args()
 
@@ -256,8 +264,8 @@ def get_fields_to_schedule(night_start, night_end):
     program_1_fields = [f for f in visible_fields if f.program_id == 1]
 
     # sort them by which ones were least recently scheduled, then by RA to minimize slews
-    program_0_fields.sort(key=lambda f: (f.last_scheduled_mjd, f.coord.ra))
-    program_1_fields.sort(key=lambda f: (f.last_scheduled_mjd, f.coord.ra))
+    program_0_fields.sort(key=lambda f: f.last_scheduled_mjd)
+    program_1_fields.sort(key=lambda f: f.last_scheduled_mjd)
 
     # select the top N fields for each program
     selected_program_0_fields = program_0_fields[:N_program_0]
@@ -407,7 +415,6 @@ def get_obs_plan(night_start, night_end, output_path):
                                             transitioner = transitioner)
         seq_scheduler(b, sequential_schedule)   
         table = sequential_schedule.to_table(show_unused=True)
-        print(table.colnames)
         table['start_time_mjd'] = Time(table['start time (UTC)'], scale='utc').mjd
         combined_obs_plan.append(table.to_pandas())
         combined_obs_plan[-1]["block_number"] = i
@@ -450,7 +457,14 @@ if __name__ == "__main__":
     start_time = time.time()
 
     args = argument_parser()
-    mjd = args.mjd  - (0.5 * u.day) # turn this on at night
+    if args.mjd:
+        mjd = Time(args.mjd, format='mjd')
+    else:
+        mjd = current_time  
+
+    mjd = mjd - (0.5 * u.day) # turn this on at night
+
+
     night_start = LS4.twilight_evening_astronomical(Time(mjd, format='mjd'), which='next')
     night_end = LS4.twilight_morning_astronomical(Time(mjd, format='mjd'), which='next')
     

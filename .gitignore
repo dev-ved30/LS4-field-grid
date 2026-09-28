@@ -1,0 +1,8 @@
+plans/replay_results/
+clustered_results/
+simulation_30_days/
+replay_results/
+survey_stats/
+__pycache__/
+*.pyc
+.DS_Store

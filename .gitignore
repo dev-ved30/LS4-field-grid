@@ -1,7 +1,7 @@
 plans/replay_results/
 clustered_results/
 simulation_30_days/
-comparison_30_days/
+old_plan_30_days/
 replay_results/
 survey_stats/
 __pycache__/

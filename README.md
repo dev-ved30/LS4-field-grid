@@ -112,16 +112,15 @@ This writes 30 nightly plans through 2026-08-15, an isolated scheduling database
 nightly and field-level statistics, both 2D sky-grid maps, and GIFs for the first
 ten nights under `simulation_30_days/`.
 
-Compare the original and simulated plans over those same 30 nights:
+Analyze the original plans for those same 30 nights to make maps you can open
+next to the simulation maps:
 
 ```bash
-python compare_survey_maps.py --days 30 --simulation-dir simulation_30_days
+python analyze_plans.py --limit 30 --output-dir old_plan_30_days
 ```
 
-This writes each plan set's statistics and maps to `comparison_30_days/`, plus
-`visits_side_by_side.html` and `visit_gaps_side_by_side.html`. Both panels share
-the same border-color scale, and the gap slider controls both panels. The folder
-also contains a field-by-field CSV comparison.
+This writes the original-plan statistics and individual visits and gap maps to
+`old_plan_30_days/` for the first 30 dated plan files.
 
 ## Analyze a survey of plans
 

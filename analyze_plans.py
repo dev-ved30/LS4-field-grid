@@ -38,6 +38,8 @@ def argument_parser():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('plans', nargs='*', type=Path,
                         help="Observing-plan CSV files. Defaults to all plans/*.csv.")
+    parser.add_argument('--limit', type=int,
+                        help='Analyze only the first N plans after sorting by filename.')
     parser.add_argument('--output-dir', type=Path, default=Path('survey_stats'),
                         help="Directory for output figures (default: survey_stats/).")
     parser.add_argument('--grid', type=Path, default=Path(LS4_field_grid_path),
@@ -259,7 +261,11 @@ def main():
 
     args = argument_parser()
 
-    plan_paths = args.plans or sorted(Path('plans').glob('*.csv'))
+    plan_paths = sorted(args.plans) if args.plans else sorted(Path('plans').glob('*.csv'))
+    if args.limit is not None:
+        if args.limit <= 0 or len(plan_paths) < args.limit:
+            raise SystemExit(f'--limit requires 1 to {len(plan_paths)} plans')
+        plan_paths = plan_paths[:args.limit]
     if not plan_paths:
         raise SystemExit('No plan CSVs found.')
 

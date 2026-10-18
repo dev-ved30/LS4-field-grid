@@ -112,6 +112,17 @@ This writes 30 nightly plans through 2026-08-15, an isolated scheduling database
 nightly and field-level statistics, both 2D sky-grid maps, and GIFs for the first
 ten nights under `simulation_30_days/`.
 
+Generate a longer run beyond the dates covered by saved plans:
+
+```bash
+python simulate_nights.py --start-date 2026-07-17 --nights 90 \
+  --output-dir simulation_90_days
+```
+
+This uses each date's astronomical twilight window at La Silla and a fresh grid
+database. It writes 90 nightly plans, `summary.csv`, `REPORT.md`, and field-level
+statistics and standalone maps in `simulation_90_days/stats/`.
+
 Analyze the original plans for those same 30 nights to make maps you can open
 next to the simulation maps:
 

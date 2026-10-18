@@ -1,22 +1,17 @@
 import time
-import astroplan
 import argparse
 import sqlite3
+from pathlib import Path
 
 import pandas as pd
 import healpy as hp
 import numpy as np
 
-from astroplan.target import FixedTarget
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
-from astroplan.scheduling import Transitioner, SequentialScheduler, Schedule
-from astroplan import ObservingBlock
 
 from constants import *
-from tqdm import tqdm
-
 from visualizations import plot_coverage_map
 
 import warnings
@@ -30,37 +25,15 @@ warnings.filterwarnings(
 # Get the current time
 current_time = Time.now() # Fix this to a specific time for testing, e.g. Time("2024-06-01 00:00:00")
 
-conn = sqlite3.connect(LS4_field_grid_db_path)
-
 def argument_parser():
 
     parser = argparse.ArgumentParser(description="Generate an observing plan for LS4 based on the field grid and current visibility.")
     parser.add_argument('--mjd', required=False, default=None, help="MJD for which to generate the observing plan. If not provided, the current time will be used.")
     parser.add_argument("--output", required=False, type=str, default=None, help="Path to save the generated observing plan CSV file. Default will just save to plans/yyyymmdd.csv")
+    parser.add_argument("--db", type=Path, default=Path(LS4_field_grid_db_path),
+                        help="Field-grid database (default: assets/LS4_field_grid.db)")
+    parser.add_argument("--no-plots", action="store_true", help="Skip the coverage plot and area calculation")
     return parser.parse_args()
-
-def skip_alternate_fields_in_dec(fields):
-
-    unskipped_fields = []
-    for f in fields:
-        field_name = f.name
-        ra_idx, dec_idx = field_name.split("_")
-        ra_idx = int(ra_idx)
-        dec_idx = int(dec_idx)
-        if dec_idx % 2 == 0 and ra_idx % 2 == 0:
-            unskipped_fields.append(f)
-
-    return unskipped_fields
-
-def skip_polar_fields(fields):
-
-    unskipped_fields = []
-    for f in fields:
-        
-        if f.coord.dec > min_declination:
-            unskipped_fields.append(f)
-    
-    return unskipped_fields
 
 def compute_theoretical_max_images_per_night(night_start, night_end):
 
@@ -93,7 +66,7 @@ def compute_theoretical_max_area_per_night(night_start, night_end):
     theoretical_max_area = theoretical_max_fields * area_per_field
     return theoretical_max_area.to_value(u.deg**2) / 2 # divide by 2 to account for the dithered pointings that cover some of the same area
 
-def compute_union_area(obs_plan, nside=2048):
+def compute_union_area(obs_plan, nside=2048, night_start=None, night_end=None):
     """
     Compute the union area (deg^2) of rectangular FoVs on the sky.
 
@@ -160,296 +133,256 @@ def compute_union_area(obs_plan, nside=2048):
     total_area_deg2 = total_area_sr * (180/np.pi)**2
 
     # maximum are possible for the night
-    max_area_deg2 = compute_theoretical_max_area_per_night(night_start, night_end)
-
-
-    print(f"Maximum area possible for the night based on exposure time and readout time: {max_area_deg2:.2f} deg^2")
     print(f"Total observed area: {total_area_deg2:.2f} deg^2")
-    print(f"Area efficiency: {100 * total_area_deg2 / max_area_deg2:.2f}%")
+    if night_start is not None and night_end is not None:
+        max_area_deg2 = compute_theoretical_max_area_per_night(night_start, night_end)
+        print(f"Maximum area possible for the night based on exposure time and readout time: {max_area_deg2:.2f} deg^2")
+        print(f"Area efficiency: {100 * total_area_deg2 / max_area_deg2:.2f}%")
 
     # plot the ares covered by different number of visits to visualize the dither pattern and coverage
     visit_counts = np.bincount(visits)
     for i in range(1, min(10, len(visit_counts))):
         area_sr = (visits == i).sum() * pixel_area_sr
         area_deg2 = area_sr * (180/np.pi)**2
-        print(f"Area covered by {i} visits: {area_deg2:.2f} deg^2 ({100 * area_deg2 / max_area_deg2:.2f}%)")
+        print(f"Area covered by {i} visits: {area_deg2:.2f} deg^2")
 
     return visits
 
-def get_visible_fields(night_start, night_end):
-    """Get the list of fields that are currently visible from La Silla Observatory."""
-
-    # Read in the field grid
-    field_grid = pd.read_sql_query("SELECT * FROM grid", conn)
-
-    time_range = [night_start, night_end]
-
-    # Get a list of visible fields for tonight
-    all_fields = []
-    for _, row in field_grid.iterrows():
-
-        field_coords = SkyCoord(ra=row["ra_deg"]*u.deg, dec=row["dec_deg"]*u.deg)
-        field_target = FixedTarget(name=row["Field Name"], coord=field_coords)
-        field_target.last_scheduled_mjd = row["last_scheduled_mjd"]
-        field_target.program_id = row["program_id"]
-        all_fields.append(field_target)
-
-    # NOTE: This is now taken care of in the build_field_grid.py script, so we don't need to do it here anymore. The field grid is already filtered to only include the primary pointings on the grid.
-    # only get primary pointing on the grid
-    # alternate_fields = skip_alternate_fields_in_dec(all_fields) 
-
-    # skip the fields too close to the pole. These will probably be skipped due to high air mass anyway.
-    non_polar_fields = skip_polar_fields(all_fields)
-
-    # Check which fields are visible tonight
-    is_visible = astroplan.is_observable(global_constraints, 
-                                         LS4, 
-                                         non_polar_fields,
-                                         time_range=time_range)
-
-     # Print visible fields
-    visible_fields = [non_polar_fields[i] for i in range(len(non_polar_fields)) if is_visible[i]]
-
-    return visible_fields
-
-def snake_sort_fields(fields, starting_field):
-
-    if not fields:
-        return []
-
-    def parse_grid_indices(field):
-        ra_idx, dec_idx = field.name.split("_")
-        return int(ra_idx), int(dec_idx)
-
-    rows = {}
-    for field in fields:
-        ra_idx, dec_idx = parse_grid_indices(field)
-        rows.setdefault(dec_idx, []).append((ra_idx, field))
-
-    ordered_fields = []
-    for row_number, dec_idx in enumerate(sorted(rows)):
-        row_fields = sorted(rows[dec_idx], key=lambda item: item[0])
-
-        if row_number % 2 == 1:
-            row_fields.reverse()
-
-        if row_number == 0 and starting_field in fields:
-            asc_fields = [field for _, field in row_fields]
-            desc_fields = list(reversed(asc_fields))
-            if desc_fields[0].coord.separation(starting_field.coord) < asc_fields[0].coord.separation(starting_field.coord):
-                ordered_fields.extend(desc_fields)
-            else:
-                ordered_fields.extend(asc_fields)
-        else:
-            ordered_fields.extend([field for _, field in row_fields])
-
-    return ordered_fields
-
-def get_fields_to_schedule(night_start, night_end):
-
-    visible_fields = get_visible_fields(night_start, night_end)
-    print("==============================================================")
-    print(len(visible_fields), "fields are visible tonight.")
-
-    N_total = compute_theoretical_max_images_per_night(night_start, night_end)
-    print(f"Theoretical maximum number of images possible tonight based on exposure time and readout time: {N_total:.0f}")
-
-    N_program_0 = int(0.25 * N_total)
-    N_program_1 = int(0.75 * N_total)
-    
-    print(f"Scheduling {N_program_0} Galactic fields (Program ID 0)")
-    print(f"Scheduling {N_program_1} Extragalactic fields (Program ID 1)")
-
-    program_0_fields = [f for f in visible_fields if f.program_id == 0]
-    program_1_fields = [f for f in visible_fields if f.program_id == 1]
-
-    # sort them by which ones were least recently scheduled, then by RA to minimize slews
-    program_0_fields.sort(key=lambda f: f.last_scheduled_mjd)
-    program_1_fields.sort(key=lambda f: f.last_scheduled_mjd)
-
-    # select the top N fields for each program
-    selected_program_0_fields = program_0_fields[:N_program_0]
-    selected_program_1_fields = program_1_fields[:N_program_1]
-
-    # combine the two lists and sort by RA to minimize slews
-    selected_fields = selected_program_0_fields + selected_program_1_fields
-    
-    # Cluster the fields spatially.
-    selected_fields.sort(key=lambda f: (f.coord.ra, f.coord.dec))
-
-    return selected_fields
-
-def update_last_scheduled_mjd(obs_plan):
-
-    # Read in the field grid
-    field_grid = pd.read_sql_query("SELECT * FROM grid", conn)
-
-    # Update the last_scheduled_mjd for each field in the obs_plan
-    for _, row in obs_plan.iterrows():
-        if row['target'] not in ['Unused Time', 'TransitionBlock']:
-            field_name = row['target']
-            mjd = row['start_time_mjd']
-            field_grid.loc[field_grid['Field Name'] == field_name, 'last_scheduled_mjd'] = mjd
-
-    # Write the updated field grid back to the database
-
-    print(field_grid)
-
-    field_grid.to_sql("grid", conn, if_exists="replace", index=False)
+def load_field_grid(db_path):
+    """Load candidates without limiting the pool before individual blocks are planned."""
+    with sqlite3.connect(db_path) as db:
+        grid = pd.read_sql_query('SELECT * FROM grid WHERE dec_deg > ?', db,
+                                 params=(min_declination.to_value(u.deg),))
+    if grid.empty:
+        raise ValueError(f"No schedulable fields in {db_path}")
+    return grid
 
 
-def get_obs_blocks(night_start, night_end):
+def _visibility_at_slots(coords, starts, exposure_duration):
+    """Check every constraint at the start and end of each proposed observation."""
+    endpoints = np.column_stack((starts.mjd, (starts + exposure_duration).mjd)).ravel()
+    times = Time(endpoints, format='mjd', scale='utc')
+    allowed = np.logical_and.reduce([
+        constraint(LS4, coords, times=times, grid_times_targets=True)
+        for constraint in global_constraints
+    ])
+    return allowed[:, 0::2] & allowed[:, 1::2]
 
-    selected_fields = get_fields_to_schedule(night_start, night_end)
 
-    num_images = default_fields_per_block
-    block_duration = default_block_duration
+def _row(target, start, end, ra=None, dec=None, dither=None, block_number=0):
+    return {
+        'target': target,
+        'start time (UTC)': start.to_datetime().isoformat(sep=' '),
+        'end time (UTC)': end.to_datetime().isoformat(sep=' '),
+        'duration (minutes)': (end - start).to_value(u.minute),
+        'ra': ra,
+        'dec': dec,
+        'configuration': str({'dither': dither}) if dither is not None else '',
+        'start_time_mjd': start.mjd,
+        'block_number': block_number,
+        'ra_hr': ra / 15 if ra is not None else None,
+    }
 
-    blocks = []
-    times = []
 
-    ra_dither = -half_field_offset_ra
-    dec_dither = 0*u.deg
+def _block_rows(observations, block_start, block_end, block_number):
+    """Emit science pointings and the actual gaps between them."""
+    rows = []
+    cursor = block_start
+    for target, start, end, ra, dec, dither in sorted(observations, key=lambda item: item[1].mjd):
+        if (start - cursor).to_value(u.second) > 1e-3:
+            rows.append(_row('Unused Time', cursor, start, block_number=block_number))
+        rows.append(_row(target, start, end, ra, dec, dither, block_number))
+        cursor = end
+    if (block_end - cursor).to_value(u.second) > 1e-3:
+        rows.append(_row('Unused Time', cursor, block_end, block_number=block_number))
+    return rows
 
-    starting_field = selected_fields[0]
 
-    # Chop up the night into 30 minute black and assign 18 field to each block, alternating between the two configs to maximize the number of fields observed while minimizing slews. This is a simple heuristic that can be improved with more sophisticated scheduling algorithms.
+def update_last_scheduled_mjd(obs_plan, db_path=LS4_field_grid_db_path):
+    """Advance history only for fields with both scheduled pointings."""
+    science = obs_plan[~obs_plan['target'].isin(['Unused Time', 'TransitionBlock'])].copy()
+    science['base_field'] = science['target'].str.removesuffix('_dither')
+    science['is_dither'] = science['target'].str.endswith('_dither')
+    pairs = science.groupby('base_field').agg(
+        visits=('target', 'size'), dithers=('is_dither', 'sum'),
+        last_mjd=('start_time_mjd', 'max'))
+    pairs = pairs[(pairs['visits'] == 2) & (pairs['dithers'] == 1)]
+    with sqlite3.connect(db_path) as db:
+        db.executemany('UPDATE grid SET last_scheduled_mjd = ? WHERE "Field Name" = ?',
+                       [(float(row.last_mjd), name) for name, row in pairs.iterrows()])
+    return len(pairs)
+
+
+def validate_pairs(obs_plan, min_separation=default_block_duration):
+    """Reject missing, duplicate, reversed, or too-close visits before saving."""
+    starts = pd.to_datetime(obs_plan['start time (UTC)'])
+    ends = pd.to_datetime(obs_plan['end time (UTC)'])
+    if (ends <= starts).any() or (starts.iloc[1:].to_numpy() < ends.iloc[:-1].to_numpy()).any():
+        raise ValueError('Observation rows overlap or have nonpositive duration')
+    science = obs_plan[~obs_plan['target'].isin(['Unused Time', 'TransitionBlock'])].copy()
+    science['base_field'] = science['target'].str.removesuffix('_dither')
+    for name, visits in science.groupby('base_field'):
+        if len(visits) != 2 or set(visits['target']) != {name, f'{name}_dither'}:
+            raise ValueError(f'{name} does not have exactly one initial and one dithered visit')
+        initial = visits.loc[visits['target'] == name].iloc[0]
+        dither = visits.loc[visits['target'] == f'{name}_dither'].iloc[0]
+        separation = (dither['start_time_mjd'] - initial['start_time_mjd']) * u.day
+        if separation < min_separation - 1 * u.millisecond:
+            raise ValueError(f'{name} revisited after only {separation.to_value(u.minute):.2f} minutes')
+    return len(science) // 2
+
+
+def validate_slews(obs_plan):
+    """Require each move to fit in readout plus any scheduled idle time."""
+    science = obs_plan[~obs_plan['target'].isin(['Unused Time', 'TransitionBlock'])]
+    previous = None
+    for _, row in science.iterrows():
+        start = Time(row['start time (UTC)'])
+        end = Time(row['end time (UTC)'])
+        coord = SkyCoord(row['ra'] * u.deg, row['dec'] * u.deg)
+        if previous is not None:
+            previous_coord, previous_end = previous
+            required = coord.separation(previous_coord) / slew_rate
+            available = read_out + (start - previous_end)
+            if required > available + 1 * u.millisecond:
+                raise ValueError(f"Slew to {row['target']} needs {required.to_value(u.second):.1f} s; "
+                                 f'only {available.to_value(u.second):.1f} s available')
+        previous = coord, end
+
+
+def get_obs_plan(night_start, night_end, output_path, db_path=LS4_field_grid_db_path,
+                 show_plots=True):
+    """Plan complete initial/dither pairs from the available grid for each block."""
+    grid = load_field_grid(db_path)
+    names = grid['Field Name'].to_numpy()
+    programs = grid['program_id'].to_numpy()
+    last_scheduled = grid['last_scheduled_mjd'].fillna(0).to_numpy(dtype=float)
+    coords = SkyCoord(grid['ra_deg'].to_numpy() * u.deg,
+                      grid['dec_deg'].to_numpy() * u.deg)
+    unit_vectors = coords.cartesian.xyz.value.T
+    dither_coords = SkyCoord((grid['ra_deg'].to_numpy() - half_field_offset_ra.to_value(u.deg)) * u.deg,
+                             grid['dec_deg'].to_numpy() * u.deg)
+    used = np.zeros(len(grid), dtype=bool)
+    rows = []
     current_time = night_start
+    exposure_duration = exp + read_out
+    min_revisit = default_block_duration
+    total_pairs = 0
+    galactic_pairs = 0
+    previous_coord = None
+    previous_end = None
+    block_number = 0
 
-    block_number = 1
-    while current_time < night_end:
+    while (night_end - current_time) >= 2 * min_revisit:
+        remaining = night_end - current_time
+        block_duration = min_revisit if remaining >= 4 * min_revisit else remaining / 2
+        slots = int((block_duration / exposure_duration).decompose().value + 1e-9)
+        offsets = np.arange(slots) * exposure_duration
+        first_starts = current_time + offsets
+        second_starts = first_starts + block_duration
+        first_ok = _visibility_at_slots(coords, first_starts, exposure_duration)
+        second_ok = _visibility_at_slots(dither_coords, second_starts, exposure_duration)
+        sidereal_degrees = first_starts.sidereal_time('mean', longitude=LS4.location.lon).deg
+        first_observations = []
+        second_observations = []
+        last_choice = None
+        last_second_end = None
+        anchor = None
+        pair_ok = first_ok & second_ok
 
-        time_remaining = night_end - current_time
+        for slot in range(slots):
+            available = np.flatnonzero(pair_ok[:, slot] & ~used)
+            if not len(available):
+                continue
 
-        # If there is not enough time left in the night to schedule the next block + revisit, just absorb that time into the current block.
-        if time_remaining < 4 * block_duration:
+            if anchor is not None:
+                in_cluster = coords[available].separation(coords[anchor]) <= max_cluster_radius
+                available = available[in_cluster]
+                if not len(available):
+                    continue
 
-            # Increase the block duration
-            block_duration = time_remaining / 2
+            if previous_coord is None:
+                slew_degrees = np.zeros(len(available))
+            else:
+                slew_degrees = coords[available].separation(previous_coord).deg
+                idle = max(0, (first_starts[slot] - previous_end).to_value(u.second)) * u.second
+                reachable = (slew_degrees * u.deg / slew_rate) <= read_out + idle
+                available = available[reachable]
+                slew_degrees = slew_degrees[reachable]
+                if not len(available):
+                    continue
 
-            # Increase the number of images in this block accordingly
-            num_images = int(block_duration / (exp + read_out)) - tolerance
+            if anchor is not None:
+                # Program allocation is a preference within the current sky
+                # cluster; it must not force a jump to a distant field.
+                preferred = 0 if galactic_pairs < 0.25 * (total_pairs + 1) else 1
+                in_program = programs[available] == preferred
+                if np.any(in_program):
+                    available = available[in_program]
+                    slew_degrees = slew_degrees[in_program]
 
-        first_visit_block_limits = [current_time, current_time + block_duration]
-        second_visit_block_limits = [current_time + block_duration, current_time + 2 * block_duration]
+            age_days = np.where(last_scheduled[available] <= 0, 30,
+                                np.clip(first_starts[slot].mjd - last_scheduled[available], 0, 30))
+            hour_angle = (sidereal_degrees[slot] - grid['ra_deg'].to_numpy()[available] + 180) % 360 - 180
+            if anchor is None:
+                # Start in a dense region so the rest of the block can remain
+                # nearby. Prefer an overdue region when densities are similar.
+                future = unit_vectors[np.flatnonzero(np.any(pair_ok, axis=1) & ~used)]
+                neighbors = (unit_vectors[available] @ future.T >=
+                             np.cos(max_cluster_radius.to_value(u.rad))).sum(axis=1)
+                score = 2 * neighbors + 0.2 * age_days + 0.5 * hour_angle / 90 - 0.4 * slew_degrees
+            else:
+                # Inside a cluster, favor adjacent fields over distant ones.
+                score = -1.5 * slew_degrees + 0.05 * age_days + 0.2 * hour_angle / 90
+            choice = available[np.argmax(score)]
+            if anchor is None:
+                anchor = choice
+            used[choice] = True
+            last_choice = choice
+            total_pairs += 1
+            galactic_pairs += int(programs[choice] == 0)
 
-        
-        # List for pointing we want to take in this block
-        first_visit_block = []
-        second_visit_block = []
+            first_start = first_starts[slot]
+            second_start = second_starts[slot]
+            first_observations.append((names[choice], first_start, first_start + exposure_duration,
+                                       coords[choice].ra.deg, coords[choice].dec.deg, False))
+            second_observations.append((f'{names[choice]}_dither', second_start,
+                                        second_start + exposure_duration,
+                                        dither_coords[choice].ra.deg, dither_coords[choice].dec.deg, True))
+            previous_coord = coords[choice]
+            previous_end = first_start + exposure_duration
+            last_second_end = second_start + exposure_duration
 
-
-        # Only schedule fields that are observable in this block and in a visit.
-        fields_visible_in_block = []
-        for f in selected_fields:
-            dithered_field = FixedTarget(name=f"{f.name}_dither", 
-                                        coord=SkyCoord(ra=f.coord.ra+ra_dither, dec=f.coord.dec+dec_dither)) 
-            if astroplan.is_observable(global_constraints, LS4, [f], time_range=first_visit_block_limits)[0] and \
-                astroplan.is_observable(global_constraints, LS4, [dithered_field], time_range=second_visit_block_limits)[0]:
-                fields_visible_in_block.append(f)
-
-        fields_visible_in_block.sort(key=lambda f: f.coord.separation(starting_field.coord))
-        fields_to_observe = snake_sort_fields(fields_visible_in_block[:num_images], starting_field)
-
-        for target in fields_to_observe:
-
-            b = ObservingBlock.from_exposures(target, 
-                                            priority=1, 
-                                            time_per_exposure=exp, 
-                                            number_exposures=1, 
-                                            readout_time=read_out,
-                                            constraints=global_constraints,
-                                            configuration={"dither": False})
-            
-            # add target to this block
-            first_visit_block.append(b)
-
-            selected_fields.remove(target)
-
-            dithered_field = FixedTarget(name=f"{target.name}_dither", 
-                coord=SkyCoord(ra=target.coord.ra+ra_dither, dec=target.coord.dec+dec_dither)) 
-            b_dither = ObservingBlock.from_exposures(dithered_field, 
-                                            priority=1, 
-                                            time_per_exposure=exp, 
-                                            number_exposures=1, 
-                                            readout_time=read_out,
-                                            constraints=global_constraints,
-                                            configuration={"dither": True})
-            second_visit_block.append(b_dither)
-
-
-        print(f"{len(first_visit_block)} images slated for block {block_number}. {len(selected_fields)} fields remaining to schedule.")
-
-
-        # Add blocks and times to the list of blocks and times for the night
-        blocks.append(first_visit_block)
-        blocks.append(second_visit_block)
-
-        times.append(first_visit_block_limits)
-        times.append(second_visit_block_limits)
-
-        current_time = times[-1][-1]
+        first_end = current_time + block_duration
+        second_end = first_end + block_duration
+        rows.extend(_block_rows(first_observations, current_time, first_end, block_number))
+        rows.extend(_block_rows(second_observations, first_end, second_end, block_number + 1))
+        if last_choice is not None:
+            previous_coord = dither_coords[last_choice]
+            previous_end = last_second_end
+        print(f'Blocks {block_number}-{block_number + 1}: {len(first_observations)} complete pairs')
+        current_time = second_end
         block_number += 2
 
-        if len(second_visit_block) > 0:
-            starting_field = second_visit_block[0].target # update the starting field for the next block to be the first field in this block to minimize slews
+    if (night_end - current_time).to_value(u.second) > 1e-3:
+        rows.append(_row('Unused Time', current_time, night_end, block_number=block_number))
 
-        if len(selected_fields) == 0:
-            break
-    
-    return blocks, times
-    
-    
-def get_obs_plan(night_start, night_end, output_path):
-
-    print("Generating observing plan for the night of", night_start.to_datetime().strftime("%Y-%m-%d"), "to", night_end.to_datetime().strftime("%Y-%m-%d"))
-    blocks, times = get_obs_blocks(night_start, night_end)
-    transitioner = Transitioner(slew_rate)
-    combined_obs_plan = []
-
-    for i, (b, t) in tqdm(enumerate(zip(blocks, times)), total=len(blocks), desc="Scheduling blocks"):
-
-        sequential_schedule = Schedule(t[0], t[1])
-        seq_scheduler = SequentialScheduler(constraints = global_constraints,
-                                            observer = LS4,
-                                            transitioner = transitioner)
-        seq_scheduler(b, sequential_schedule)   
-        table = sequential_schedule.to_table(show_unused=True)
-        table['start_time_mjd'] = Time(table['start time (UTC)'], scale='utc').mjd
-        combined_obs_plan.append(table.to_pandas())
-        combined_obs_plan[-1]["block_number"] = i
-
-
-    combined_obs_plan = pd.concat(combined_obs_plan, ignore_index=True)
-    #print(combined_obs_plan)
-
-    # remove the deg from ra and dec columns while preserving blank rows
-    combined_obs_plan['ra'] = pd.to_numeric(
-        combined_obs_plan['ra'].astype(str).str.replace(' deg', '', regex=False),
-        errors='coerce',
-    )
-    combined_obs_plan['dec'] = pd.to_numeric(
-        combined_obs_plan['dec'].astype(str).str.replace(' deg', '', regex=False),
-        errors='coerce',
-    )
-
-    combined_obs_plan['ra_hr'] = combined_obs_plan['ra'] * u.deg.to(u.hourangle)
-
-    print("Saving observing plan to", output_path)
-    combined_obs_plan.to_csv(output_path, index=False)
-
-    update_last_scheduled_mjd(combined_obs_plan)
-
-    print("Done!\n==============================================================")
-    images_scheduled = sum(len(b) for b in blocks)
-    max_images_possible = compute_theoretical_max_images_per_night(night_start, night_end)
-    print(f"{images_scheduled} images scheduled out of {max_images_possible:.0f} possible images for the night based on exposure time and readout time.")
-    print("Imaging efficiency: {:.2f}%".format(100 * images_scheduled / max_images_possible))
-
-    compute_time_efficiency(combined_obs_plan, night_start, night_end)
-    compute_theoretical_max_area_per_night(night_start, night_end)
-    visits = compute_union_area(combined_obs_plan, nside=32)
-    plot_coverage_map(visits)   
+    obs_plan = pd.DataFrame(rows)
+    completed = validate_pairs(obs_plan)
+    validate_slews(obs_plan)
+    assert completed == total_pairs
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    obs_plan.to_csv(output_path, index=False)
+    recorded = update_last_scheduled_mjd(obs_plan, db_path)
+    assert recorded == completed, 'Only complete pairs should be recorded'
+    print(f'Wrote {output_path}: {2 * completed} images in {completed} complete pairs')
+    compute_time_efficiency(obs_plan, night_start, night_end)
+    if show_plots:
+        visits = compute_union_area(obs_plan, nside=32, night_start=night_start,
+                                    night_end=night_end)
+        plot_coverage_map(visits)
+    return obs_plan
 
 
 if __name__ == "__main__":
@@ -473,7 +406,8 @@ if __name__ == "__main__":
     else:
         output_path = f"plans/{Time(mjd, format='mjd').to_datetime().strftime('%Y%m%d')}.csv"
 
-    get_obs_plan(night_start, night_end, output_path)
+    get_obs_plan(night_start, night_end, output_path, db_path=args.db,
+                 show_plots=not args.no_plots)
 
     end_time = time.time()
     print(f"Scheduling took {end_time - start_time:.2f} seconds.")

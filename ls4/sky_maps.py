@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from make_observing_plan_gif import galactic_to_equatorial
+from ls4.animate import galactic_to_equatorial
 
 
 def wrap_lon(ra):

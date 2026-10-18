@@ -1,31 +1,31 @@
-#!/usr/bin/env python3
-"""Create a Mollweide GIF showing one LS4 observing plan as Earth rotates.
+"""Mollweide GIFs of an observing plan as the sky rotates over La Silla.
 
-Frames are sampled through the selected plan.  The map is centered on La Silla's local
+Frames are sampled through the plan. The map is centered on La Silla's local
 sidereal time at the frame timestamp, so the celestial sphere moves overhead.
-Every scheduled pointing is drawn as an LS4 field-of-view outline: first
-pointings are cyan and dithered revisits are magenta. The Milky Way's galactic
-plane is drawn in the background so you can see at a glance whether the survey
-is tracking through/around it as expected.
+Each scheduled pointing is drawn as an LS4 field-of-view outline, colored either
+by pointing type (``mode="pointings"``: cyan first pointing, magenta dither) or
+by cumulative visits to its base field (``mode="visits"``, Viridis). The
+galactic plane is drawn in the background.
 """
 
 from __future__ import annotations
 
-import argparse
 import csv
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ls4.config import FOV_length, FOV_width, GRID_CSV, LS4
 
-# LS4 rectangular field of view from constants.py, converted from arcseconds.
-FOV_RA_DEG = 16924.67 / 3600
-FOV_DEC_DEG = 17826.13 / 3600
-LA_SILLA_LONGITUDE_DEG = -70.7367
-LA_SILLA_LATITUDE_DEG = -29.2612
+# LS4 rectangular field of view, in degrees.
+FOV_RA_DEG = float(FOV_width.to_value("deg"))
+FOV_DEC_DEG = float(FOV_length.to_value("deg"))
+LA_SILLA_LONGITUDE_DEG = float(LS4.location.lon.deg)
+LA_SILLA_LATITUDE_DEG = float(LS4.location.lat.deg)
 MARGIN = 70
 MJD_UNIX_EPOCH = 40587.0
 
@@ -44,23 +44,6 @@ class Pointing:
     ra: float
     dec: float
     dither: bool
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("plan", type=Path, help="observing-plan CSV to animate")
-    parser.add_argument("--output", type=Path,
-                        help="GIF to create (default: <plan filename>.gif in the current directory)")
-    parser.add_argument("--field-grid", type=Path, default=Path("assets/LS4_field_grid.csv"))
-    parser.add_argument("--cadence-minutes", type=int, default=15,
-                        help="time between frames within each plan (default: 15)")
-    parser.add_argument("--duration", type=int, default=250,
-                        help="milliseconds per GIF frame (default: 250)")
-    parser.add_argument("--width", type=int, default=1920)
-    parser.add_argument("--height", type=int, default=1200)
-    parser.add_argument("--no-galaxy", action="store_true",
-                        help="omit the galactic-plane overlay")
-    return parser.parse_args()
 
 
 def read_grid(path: Path) -> list[tuple[float, float]]:
@@ -256,8 +239,50 @@ def draw_la_silla_marker(draw: ImageDraw.ImageDraw, center_ra: float, width: int
     draw.text((x + 15, y - 12), "La Silla zenith", fill="#ffd166", font=label_font)
 
 
+
+VIRIDIS_STOPS = (
+    (68, 1, 84),
+    (59, 82, 139),
+    (33, 145, 140),
+    (94, 201, 98),
+    (253, 231, 37),
+)
+
+
+def base_field_name(pointing: Pointing) -> str:
+    return pointing.target.removesuffix("_dither")
+
+
+def viridis_color(value: float, maximum: int) -> tuple[int, int, int]:
+    """Interpolate a Viridis color from the integer visit count."""
+    fraction = 0.0 if maximum <= 1 else (value - 1) / (maximum - 1)
+    fraction = max(0.0, min(1.0, fraction))
+    position = fraction * (len(VIRIDIS_STOPS) - 1)
+    index = min(int(position), len(VIRIDIS_STOPS) - 2)
+    remainder = position - index
+    start, end = VIRIDIS_STOPS[index], VIRIDIS_STOPS[index + 1]
+    return tuple(round(a + (b - a) * remainder) for a, b in zip(start, end))
+
+
+def draw_colorbar(draw: ImageDraw.ImageDraw, maximum: int, width: int, height: int) -> None:
+    font = load_font(20)
+    x0, x1 = width - 430, width - MARGIN
+    y0, y1 = 110, 134
+    for x in range(x0, x1):
+        fraction = (x - x0) / max(1, x1 - x0 - 1)
+        color = viridis_color(1 + fraction * (maximum - 1), maximum)
+        draw.line((x, y0, x, y1), fill=color)
+    draw.rectangle((x0, y0, x1, y1), outline="#d4dce3", width=1)
+    draw.text((x0, y0 - 27), "Cumulative visits", fill="#d4dce3", font=font)
+    draw.text((x0, y1 + 4), "1", fill="#d4dce3", font=font)
+    draw.text((x1 - 32, y1 + 4), str(maximum), fill="#d4dce3", font=font)
+
+
+
+
 def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timestamp_mjd: float,
-               frame_number: int, frame_count: int, width: int, height: int, show_galaxy: bool) -> Image.Image:
+               frame_number: int, frame_count: int, width: int, height: int, show_galaxy: bool,
+               mode: str = "pointings", max_visits: int = 1) -> Image.Image:
     image = Image.new("RGB", (width, height), "#101820")
     draw = ImageDraw.Draw(image)
     title_font = load_font(30)
@@ -276,20 +301,31 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
         x, y = project(ra, dec, center_ra, width, height)
         draw.point((x, y), fill="#526473")
 
-    for pointing in observed:
-        draw_fov(draw, pointing, center_ra, width, height,
-                 "#e652a0" if pointing.dither else "#44b8e8", 2)
+    if mode == "visits":
+        visits = Counter(base_field_name(pointing) for pointing in observed)
+        for pointing in observed:
+            draw_fov(draw, pointing, center_ra, width, height,
+                     viridis_color(visits[base_field_name(pointing)], max_visits), 2)
+    else:
+        for pointing in observed:
+            draw_fov(draw, pointing, center_ra, width, height,
+                     "#e652a0" if pointing.dither else "#44b8e8", 2)
     draw_la_silla_marker(draw, center_ra, width, height, label_font)
 
-    draw.text((MARGIN, 14), f"LS4 observing plan   frame {frame_number}/{frame_count}",
+    title = "LS4 field visit count" if mode == "visits" else "LS4 observing plan"
+    draw.text((MARGIN, 14), f"{title}   frame {frame_number}/{frame_count}",
               fill="#f2f6f9", font=title_font)
     draw.text((MARGIN, 49), f"{timestamp:%Y-%m-%d %H:%M UTC}   MJD {timestamp_mjd:.5f}",
               fill="#f2f6f9", font=time_font)
-    caption = "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith"
-    if show_galaxy:
-        caption += "   purple: galactic plane (+-10 deg)"
-    draw.text((MARGIN, height - 28), caption, fill="#d4dce3", font=label_font)
-    draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
+    if mode == "visits":
+        draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
+        draw_colorbar(draw, max_visits, width, height)
+    else:
+        caption = "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith"
+        if show_galaxy:
+            caption += "   purple: galactic plane (+-10 deg)"
+        draw.text((MARGIN, height - 28), caption, fill="#d4dce3", font=label_font)
+        draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
     return image
 
 
@@ -307,30 +343,30 @@ def frame_times(plan: list[Pointing], cadence_minutes: int) -> list[float]:
     return times
 
 
-def main() -> None:
-    args = parse_args()
-    if args.cadence_minutes <= 0 or args.duration <= 0:
-        raise ValueError("cadence-minutes and duration must be positive")
-    if not args.plan.is_file() or not args.field_grid.is_file():
-        raise FileNotFoundError("plan CSV or field-grid CSV was not found")
 
-    plan = read_plan(args.plan)
-    grid = read_grid(args.field_grid)
-    timeline = frame_times(plan, args.cadence_minutes)
+def make_gif(plan_path: Path, output: Path, mode: str = "pointings", grid_path: Path = GRID_CSV,
+             cadence_minutes: int = 15, duration: int = 250, width: int = 1920, height: int = 1200,
+             show_galaxy: bool = True) -> Path:
+    """Render one plan as a GIF. `mode` is "pointings" or "visits"."""
+    if mode not in ("pointings", "visits"):
+        raise ValueError(f"Unknown GIF mode: {mode}")
+    if cadence_minutes <= 0 or duration <= 0:
+        raise ValueError("cadence-minutes and duration must be positive")
+    plan = read_plan(Path(plan_path))
+    grid = read_grid(Path(grid_path))
+    timeline = frame_times(plan, cadence_minutes)
+    max_visits = max(Counter(base_field_name(pointing) for pointing in plan).values())
 
     frames = []
     for frame_number, timestamp_mjd in enumerate(timeline, start=1):
-        current = [pointing for pointing in plan if pointing.end_mjd <= timestamp_mjd]
-        frames.append(make_frame(grid, current, timestamp_mjd, frame_number, len(timeline),
-                                  args.width, args.height, not args.no_galaxy))
+        observed = [pointing for pointing in plan if pointing.end_mjd <= timestamp_mjd]
+        frames.append(make_frame(grid, observed, timestamp_mjd, frame_number, len(timeline),
+                                 width, height, show_galaxy, mode, max_visits))
         print(f"Added frame {frame_number}/{len(timeline)}: {mjd_to_utc(timestamp_mjd):%Y-%m-%d %H:%M UTC}")
 
-    output = args.output or Path(f"{args.plan.stem}.gif")
+    output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    frames[0].save(output, save_all=True, append_images=frames[1:], duration=args.duration, loop=0,
+    frames[0].save(output, save_all=True, append_images=frames[1:], duration=duration, loop=0,
                    optimize=False)
     print(f"Wrote {output} ({len(frames)} frames)")
-
-
-if __name__ == "__main__":
-    main()
+    return output

@@ -1,188 +1,105 @@
 # LS4 field grid
 
-Tools for building a field grid and generating, visualizing, and evaluating observing plans for the LS4 instrument at La Silla Observatory.
+Tools for building the LS4 field grid at La Silla Observatory, scheduling nightly
+observing plans, and analyzing survey coverage and cadence.
 
-The scheduling workflow uses a rectangular LS4 field of view, 60-second exposures, 40-second readout time, and visibility constraints based on airmass, astronomical night, and Moon separation. The default observing strategy schedules an initial pointing followed by a dithered revisit.
+Plans use a rectangular LS4 field of view, 60-second exposures, 40-second readout,
+and airmass, night, and Moon-separation constraints. Every field is observed as an
+initial pointing plus a dithered revisit at least 30 minutes later.
 
-## Workflow
-
-The main workflow is:
-
-1. Build the field grid and its SQLite database.
-2. Generate an observing plan for a night.
-3. Visualize or animate the plan.
-4. Aggregate multiple plans to inspect coverage and cadence.
-
-## Requirements
-
-The scripts require Python 3 and astronomy/scientific Python packages, including:
-
-- `astropy` and `astroplan`
-- `regions`
-- `healpy`
-- `m4opt`
-- `numpy` and `pandas`
-- `Pillow`, `plotly`, and `tqdm`
-
-Install the packages in the Python environment used to run the scripts. This repository does not currently include a `requirements.txt` or packaging configuration.
-
-## Build the field grid
-
-The checked-in grid is available as `assets/LS4_field_grid.csv`. The local SQLite
-database at `assets/LS4_field_grid.db` is generated separately. To rebuild the grid
-and create the database from scratch:
+## Setup
 
 ```bash
-python build_field_grid.py
+conda activate ls4-fields
+pip install -e .          # installs the `ls4` command and dependencies
 ```
 
-The script assigns each field a grid name, equatorial and Galactic coordinates, and a program ID. It also produces a test field-grid visualization. The database table used by the scheduler is named `grid`.
+Without installing, run the same commands from the repository root as `python -m ls4 ...`.
 
-## Generate an observing plan
+## Commands
 
-Generate a plan using the current date:
+| Command | What it does |
+| --- | --- |
+| `ls4 plan` | Schedule tonight (or `--date YYYY-MM-DD`) into `plans/YYYYMMDD.csv` and update the grid database |
+| `ls4 export plans/X.csv` | Convert a plan to the telescope `.obsplan` format |
+| `ls4 viz plans/X.csv` | Interactive plot; add `--gif`, `--visits-gif`, `--coverage`, or `--html` |
+| `ls4 analyze [plans...]` | Per-field visits, cadence, nightly summary, and sky maps (default: all of `plans/`) |
+| `ls4 simulate` | Schedule many nights on a fresh database (`--start`, `--nights`), or `--replay plans/` to re-plan saved nights and compare |
+| `ls4 build-grid` | Rebuild the grid CSV and database (`--force` required if the database exists) |
+
+Every command has `--help`.
+
+### Nightly workflow
 
 ```bash
-python generate_obs_plan.py
+ls4 plan                                  # writes plans/<tonight>.csv
+ls4 export plans/20260717.csv -d 20260718 # writes 20260718.obsplan
+ls4 viz plans/20260717.csv --gif
 ```
 
-Specify an observing date with an MJD and optionally choose the output path:
+`ls4 plan` uses the astronomical-twilight window that starts on the given local
+evening date. It reads `assets/LS4_field_grid.db` and advances each field's
+`last_scheduled_mjd` only when its complete initial/dither pair is in the plan.
+
+### Simulations
 
 ```bash
-python generate_obs_plan.py --mjd 61238.5 --output plans/example.csv
+ls4 simulate --start 2026-07-17 --nights 90 --name sim90 --gifs 5
+ls4 simulate --replay plans --name replay
 ```
 
-If `--output` is omitted, the plan is written to `plans/YYYYMMDD.csv`. The scheduler reads the field grid from `assets/LS4_field_grid.db` and updates `last_scheduled_mjd` after writing the plan.
+Each run writes to `outputs/<name>/`: one CSV per night, an isolated `grid.db`,
+`summary.csv`, `REPORT.md`, `stats/`, and optional `gifs/`. The project
+database and saved plans are never modified. A replay also records the saved plan's
+metrics (`baseline_*` columns) next to the new ones.
 
-The scheduler chooses fields separately for each pair of observing blocks. It keeps each block's fields within the `max_cluster_radius` set in `constants.py` and favors nearby successive pointings. It checks both pointings at their planned start and end times, schedules the revisit at least 30 minutes after the first visit, and advances a field's database history only when the complete pair is present. Consecutive observations must allow for exposure time plus the larger of slew time and readout time; `slew_rate` and `read_out` are configurable in `constants.py`. Use `--db` to select another grid database and `--no-plots` for batch runs.
+## How the scheduler works
 
-Plan CSVs contain target names, UTC start/end times, durations, RA/Dec, dither configuration, MJD timestamps, block numbers, and RA in hours. Rows with `Unused Time` or `TransitionBlock` describe schedule gaps or transitions rather than science pointings.
+The night is split into pairs of 30-minute blocks: the first block takes initial
+pointings and the second revisits the same fields, dithered, in the same order.
+For each block the scheduler:
 
-## Visualize a plan
+- picks a dense, overdue starting field and keeps the rest of the block within
+  `max_cluster_radius` of it;
+- checks both pointings against all constraints at their start and end times;
+- requires each move to fit within readout plus any idle time (`slew_rate`, `read_out`);
+- prefers galactic fields until they make up about 25% of pairs, without leaving the cluster.
 
-Create the interactive observing-plan plot:
+Plans are validated (exactly one initial and one dither per field, at least 30 minutes
+apart, no overlapping rows, all slews feasible) before they are saved.
 
-```bash
-python vizualize_obs_plan.py plans/20260717.csv
-```
+## Plan CSV format
 
-The filename contains the historical spelling `vizualize` and should be used as written.
+`target, start time (UTC), end time (UTC), duration (minutes), ra, dec, configuration,
+start_time_mjd, block_number, ra_hr`. Dithered visits are named `<field>_dither`.
+Rows named `Unused Time` (or `TransitionBlock` in older plans) are gaps, not pointings.
 
-Create a GIF showing the plan as the sky rotates:
+## Survey analysis outputs
 
-```bash
-python make_observing_plan_gif.py plans/20260717.csv \
-  --output observing_plan.gif
-```
-
-Create a GIF showing cumulative visits to each field:
-
-```bash
-python make_visit_count_gif.py plans/20260717.csv \
-  --output visit_counts.gif
-```
-
-Both GIF scripts accept `--cadence-minutes`, `--duration`, `--width`, `--height`, and `--no-galaxy`. They use `assets/LS4_field_grid.csv` by default; an alternative grid can be supplied with `--field-grid`.
-
-## Replay and compare the scheduler
-
-Replay the nights in `plans/` from a fresh copy of `assets/LS4_field_grid.csv`:
-
-```bash
-python replay_plans.py
-```
-
-The script writes replacement plans, an isolated SQLite database, `summary.csv`, and
-full-period field statistics in `stats/` to `replay_results/`. It leaves the original
-plans and database untouched. Use `--limit 1` for a quick check or `--output-dir` to
-save the comparison elsewhere. The summary compares image counts, complete pairs,
-short revisit intervals, unused minutes, and slew angles for each night. The stats
-step checks every field history in the replay database against the generated plans.
-
-Add `--gifs-first 10` to make both sky-rotation and visit-count GIFs for the first ten replayed nights in `replay_results/gifs/`.
-
-When the 30 nightly baseline plans from 2026-07-17 through 2026-08-15 are present
-in `plans/`, run their simulation with:
-
-```bash
-python replay_plans.py --limit 30 --output-dir simulation_30_days --gifs-first 10
-```
-
-This writes 30 nightly plans through 2026-08-15, an isolated scheduling database,
-nightly and field-level statistics, both 2D sky-grid maps, and GIFs for the first
-ten nights under `simulation_30_days/`.
-
-Generate a longer run beyond the dates covered by saved plans:
-
-```bash
-python simulate_nights.py --start-date 2026-07-17 --nights 90 \
-  --output-dir simulation_90_days
-```
-
-This uses each date's astronomical twilight window at La Silla and a fresh grid
-database. It writes 90 nightly plans, `summary.csv`, `REPORT.md`, and field-level
-statistics and standalone maps in `simulation_90_days/stats/`.
-
-Analyze the original plans for those same 30 nights to make maps you can open
-next to the simulation maps:
-
-```bash
-python analyze_plans.py --limit 30 --output-dir old_plan_30_days
-```
-
-This writes the original-plan statistics and individual visits and gap maps to
-`old_plan_30_days/` for the first 30 dated plan files.
-
-## Analyze a survey of plans
-
-Analyze every CSV in `plans/`:
-
-```bash
-python analyze_plans.py
-```
-
-Analyze selected plans and write results elsewhere:
-
-```bash
-python analyze_plans.py plans/20260717.csv plans/20260718.csv \
-  --output-dir survey_stats
-```
-
-To update the full 32-night clustered replay statistics and verify its field history:
-
-```bash
-python analyze_plans.py clustered_results/20*.csv \
-  --db clustered_results/replay_grid.db --output-dir survey_stats
-```
-
-The analysis writes interactive HTML figures, `summary.txt`, `nightly_summary.csv`, and
-`per_field_stats.csv`. The per-field table includes every grid field, even those with
-zero visits, plus the number of nights when a complete pair was visible at sampled
-10-minute intervals. With `--db`, analysis fails if any field's last scheduled MJD
-disagrees with the plans. `visits_per_field_map.html` shows the full field grid on
-a flat RA–Dec chart, with the Galactic plane overlaid. Only each field's border is
-colored; unvisited fields have gray borders. The companion
-`visit_gap_percentile_map.html` has a P0–P100 slider for the gap between consecutive
-initial visits to each field; the 30-minute dither does not count as a separate
-survey revisit. The maps use a lightweight, self-contained 2D canvas and open
-without a network connection. Add `--show` to open the remaining Plotly figures
-while generating them.
+`ls4 analyze` writes `summary.txt`, `nightly_summary.csv`, `per_field_stats.csv`
+(every grid field, including unvisited ones, with sampled visibility), Plotly HTML
+histograms, and two self-contained sky maps: `visits_per_field_map.html` and
+`visit_gap_percentile_map.html` (P0–P100 slider over gaps between initial visits).
+With `--db`, it fails if any field's database history disagrees with the plans.
 
 ## Repository layout
 
 ```text
-assets/              Field-grid CSV and SQLite database
-plans/               Nightly observing-plan CSVs
-survey_stats/        Generated survey statistics and HTML figures
-build_field_grid.py  Generate the field grid and database
-generate_obs_plan.py Generate a nightly observing plan
-analyze_plans.py     Analyze multiple plans
-visualizations.py    Shared Plotly and coverage visualizations
-constants.py         Telescope, field-of-view, and scheduling parameters
+ls4/
+  config.py     Telescope, field-of-view, constraint parameters, and paths
+  grid.py       Grid construction and database access
+  scheduler.py  Night window, visibility, and the pair scheduler
+  metrics.py    Per-night metrics and multi-night survey statistics
+  plots.py      Plotly figures
+  animate.py    Sky-rotation GIFs
+  sky_maps.py   Standalone HTML sky maps
+  export.py     .obsplan writer
+  cli.py        The `ls4` command
+assets/         Field-grid CSV (the .db is local and gitignored)
+plans/          Real nightly plans; plans/archive/ holds older ones
+outputs/        Generated runs, stats, and GIFs (gitignored)
+tests/          Smoke test (`pytest` or `python tests/test_smoke.py`)
 ```
 
-Additional notebooks, FITS/region files, archived plans, and generated GIFs are included for exploration and validation.
-
-## Configuration
-
-Common scheduling parameters are defined in [`constants.py`](constants.py), including the field-of-view dimensions, exposure/readout times, declination limit, maximum airmass, and Moon-separation constraint. Changes to these values affect both field-grid generation and plan scheduling, so regenerate dependent outputs when appropriate.
+Changing values in `ls4/config.py` affects both the grid and the scheduler, so
+regenerate dependent outputs afterwards.

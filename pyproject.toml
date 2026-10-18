@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ls4"
+version = "2.0.0"
+description = "LS4 field grid, nightly scheduler, and survey analysis for La Silla"
+requires-python = ">=3.10"
+dependencies = [
+    "astropy>=6",
+    "astroplan>=0.10",
+    "healpy",
+    "m4opt>=2",
+    "numpy",
+    "pandas",
+    "pillow",
+    "plotly",
+    "regions",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ls4 = "ls4.cli:main"
+
+[tool.setuptools]
+packages = ["ls4"]

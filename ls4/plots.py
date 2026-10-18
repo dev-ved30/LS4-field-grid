@@ -1,12 +1,32 @@
-import pandas as pd
-import numpy as np
-import healpy as hp
-import plotly.graph_objects as go
+"""Plotly figures: field grid, observing plans, coverage maps, and survey statistics."""
 
+from pathlib import Path
+
+import healpy as hp
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 from astropy import units as u
 from astropy.coordinates import SkyCoord
-from constants import *
 from m4opt.fov import footprint
+
+from ls4.config import region
+
+SKY_GEO = dict(showland=False, showcountries=False, showcoastlines=False,
+               lonaxis=dict(showgrid=True, gridwidth=0.5), lataxis=dict(showgrid=True, gridwidth=0.5))
+
+
+def _finish(fig, output=None, show=True):
+    """Save a figure as standalone HTML and/or open it in the browser."""
+    if output is not None:
+        output = Path(output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.write_html(output, include_plotlyjs="cdn")
+        print(f"  wrote {output}")
+    if show:
+        fig.show(config={"scrollZoom": True, "displayModeBar": True})
+    return fig
+
 
 def footprint_outline(region):
     if hasattr(region, "to_polygon_sky"):
@@ -17,14 +37,12 @@ def footprint_outline(region):
         return None, None
     lon = vertices.ra.wrap_at(180 * u.deg).deg
     lat = vertices.dec.deg
-    lon = np.append(lon, lon[0])
-    lat = np.append(lat, lat[0])
-    return lon, lat
+    return np.append(lon, lon[0]), np.append(lat, lat[0])
+
 
 def _normalize_footprint_result(footprint_result):
     if hasattr(footprint_result, "to_polygon_sky") or hasattr(footprint_result, "vertices"):
         return [footprint_result]
-
     if isinstance(footprint_result, (list, tuple, np.ndarray)):
         if len(footprint_result) == 0:
             return []
@@ -32,123 +50,40 @@ def _normalize_footprint_result(footprint_result):
         if isinstance(first_item, (list, tuple, np.ndarray)):
             return list(first_item)
         return list(footprint_result)
-
     return [footprint_result]
 
-def plot_field_grid(field_grid_df):
-    """Plot the field grid vertices and a few example footprints for testing.
-    
-    Arguments:
-    field_grid_df -- a DataFrame containing the field grid vertices with columns "ra_deg", "dec_deg", and "Field Name"
-    """
 
-    vertices = SkyCoord(
-        ra=field_grid_df["ra_deg"].to_numpy() * u.deg,
-        dec=field_grid_df["dec_deg"].to_numpy() * u.deg,
-        frame="icrs",
-    )
-
-    field_names = field_grid_df["Field Name"].astype(str)
-    colors = []
-    for f in field_names:
-        ra_idx, dec_idx = f.split("_")
-        ra_idx = int(ra_idx)
-        dec_idx = int(dec_idx)
-        if dec_idx % 2 == 0 and ra_idx % 2 == 0:
-            colors.append("red")
-        else:
-            colors.append("gray")
-
-    all_footprints = footprint(region, vertices)
-    footprints = [all_footprints[1001], all_footprints[1002], all_footprints[1005], all_footprints[1007]]
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Scattergeo(
-        lon=vertices.ra.wrap_at(180 * u.deg).deg,
-        lat=vertices.dec.deg,
-        mode="markers",
-        marker=dict(size=4, color=colors),
-        name="Grid vertices"
-    ))
-
-    for i, r in enumerate(footprints):
+def field_grid(grid, output=None, show=True, example_fields=(1001, 1002, 1005, 1007)):
+    """Grid centers plus a few example footprints, as a sanity check of the tiling."""
+    vertices = SkyCoord(ra=grid["ra_deg"].to_numpy() * u.deg,
+                        dec=grid["dec_deg"].to_numpy() * u.deg, frame="icrs")
+    fig = go.Figure(go.Scattergeo(lon=vertices.ra.wrap_at(180 * u.deg).deg, lat=vertices.dec.deg,
+                                  mode="markers", marker=dict(size=4, color="red"),
+                                  name="Grid vertices"))
+    examples = [index for index in example_fields if index < len(vertices)]
+    for i, r in enumerate(footprint(region, vertices[examples])):
         lon, lat = footprint_outline(r)
         if lon is None:
             continue
-        fig.add_trace(go.Scattergeo(
-            lon=lon,
-            lat=lat,
-            mode="lines",
-            line=dict(width=1.5, color="black"),
-            name="FoV footprint" if i == 0 else None,
-            showlegend=(i == 0)
-        ))
+        fig.add_trace(go.Scattergeo(lon=lon, lat=lat, mode="lines",
+                                    line=dict(width=1.5, color="black"),
+                                    name="FoV footprint" if i == 0 else None, showlegend=(i == 0)))
+    fig.update_layout(title="LS4 Field Grid (interactive)", height=750,
+                      geo=dict(projection_type="orthographic", **SKY_GEO))
+    return _finish(fig, output, show)
 
-    fig.update_layout(
-        title="LS4 Field Grid (interactive)",
-        height=750,
-        geo=dict(
-            projection_type="orthographic",
-            showland=False,
-            showcountries=False,
-            showcoastlines=False,
-            lonaxis=dict(showgrid=True, gridwidth=0.5),
-            lataxis=dict(showgrid=True, gridwidth=0.5)
-        )
-    )
-    fig.show()
 
-def plot_visible_fields(fields, visibility):
-
-    names = [field.name for field in fields]
-    ras = [field.coord.ra.wrap_at(180 * u.deg).deg for field in fields]
-    decs = [field.coord.dec.deg for field in fields]
-    colors = ['rgba(65,105,225,1.0)' if vis else 'rgba(128,128,128,0.3)' 
-              for vis in visibility]
-
-    
-    fig = go.Figure()
-
-    fig.add_trace(go.Scattergeo(
-        lon=ras,
-        lat=decs,
-        mode="markers",
-        marker=dict(size=5, color=colors),
-        text=[f"RA: {ra:.2f}°, Dec: {dec:.2f}°<br>visible: {vis}<br>field: {name}" 
-            for ra, dec, vis, name in zip(ras, decs, visibility, names)],
-        hoverinfo="text",
-        name="Grid vertices"
-    ))
-
-    fig.update_layout(
-        title="LS4 Field Grid (180-day visibility)",
-        height=1000,
-        geo=dict(
-            projection_type="orthographic",
-            projection_rotation=dict(lon=0, lat=25),
-            showland=False,
-            showcountries=False,
-            showcoastlines=False,
-            lonaxis=dict(showgrid=True, gridwidth=0.5),
-            lataxis=dict(showgrid=True, gridwidth=0.5)
-        )
-    )
-    fig.show()
-
-def plot_obs_plan(plan):
+def observing_plan(plan, output=None, show=True):
+    """Animated footprint-by-footprint view of one plan (slider and play button)."""
     plan = plan.copy()
     required_columns = {"target", "start time (UTC)", "ra", "dec"}
     missing_columns = required_columns.difference(plan.columns)
     if missing_columns:
         raise ValueError(f"plan must include {sorted(required_columns)} columns")
 
-    if "block_number" in plan.columns:
-        block_column = "block_number"
-    elif "block_numer" in plan.columns:
-        block_column = "block_numer"
-    else:
-        raise ValueError("plan must include 'block_number' or 'block_numer' for coloring")
+    if "block_number" not in plan.columns:
+        raise ValueError("plan must include 'block_number' for coloring")
+    block_column = "block_number"
 
     plan = plan[plan["target"].astype(str) != "TransitionBlock"].copy()
     plan["start time (UTC)"] = pd.to_datetime(plan["start time (UTC)"])
@@ -343,70 +278,81 @@ def plot_obs_plan(plan):
     fig.update_layout(
         title=f"LS4 Observing Plan ({len(scheduled_rows)} images)",
         height=1000,
-        geo=dict(
-            projection_type="orthographic",
-            projection_rotation=dict(lon=0, lat=25),
-            showland=False,
-            showcountries=False,
-            showcoastlines=False,
-            lonaxis=dict(showgrid=True, gridwidth=0.5),
-            lataxis=dict(showgrid=True, gridwidth=0.5),
-        )
+        geo=dict(projection_type="orthographic", projection_rotation=dict(lon=0, lat=25), **SKY_GEO),
     )
-    fig.show()
+    return _finish(fig, output, show)
 
 
-def plot_coverage_map(observed_mask, title="Observed Sky Area"):
-    """Plot a HEALPix coverage map with Plotly.
-
-    Parameters
-    ----------
-    observed_mask : array-like
-        HEALPix mask or visit-count map. Values greater than zero are shown.
-    """
-
-    m = np.asarray(observed_mask)
+def coverage_map(visits, title="Observed Sky Area", output=None, show=True):
+    """HEALPix visit-count map; pixels with zero visits are hidden."""
+    m = np.asarray(visits)
     observed_pixels = np.flatnonzero(m > 0)
-
     fig = go.Figure()
-
     if observed_pixels.size > 0:
-        nside = hp.npix2nside(m.size)
-        theta, phi = hp.pix2ang(nside, observed_pixels)
-        lon = np.degrees(phi)
-        lon = ((lon + 180) % 360) - 180
-        lat = 90.0 - np.degrees(theta)
-
+        theta, phi = hp.pix2ang(hp.npix2nside(m.size), observed_pixels)
         fig.add_trace(go.Scattergeo(
-            lon=lon,
-            lat=lat,
+            lon=((np.degrees(phi) + 180) % 360) - 180,
+            lat=90.0 - np.degrees(theta),
             mode="markers",
-            marker=dict(
-                size=4,
-                color=m[observed_pixels],
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title="Visits"),
-            ),
+            marker=dict(size=4, color=m[observed_pixels], colorscale="Viridis",
+                        showscale=True, colorbar=dict(title="Visits")),
             hovertemplate="Lon: %{lon:.2f}°<br>Lat: %{lat:.2f}°<br>Visits: %{marker.color}<extra></extra>",
             showlegend=False,
         ))
+    fig.update_layout(title=title, height=700, margin=dict(l=20, r=20, t=60, b=20),
+                      hovermode="closest",
+                      geo=dict(projection_type="mollweide", showframe=False, **SKY_GEO))
+    return _finish(fig, output, show)
 
-    fig.update_layout(
-        title=title,
-        height=700,
-        margin=dict(l=20, r=20, t=60, b=20),
-        hovermode="closest",
-        geo=dict(
-            projection_type="mollweide",
-            showland=False,
-            showcountries=False,
-            showcoastlines=False,
-            showframe=False,
-            lonaxis=dict(showgrid=True, gridwidth=0.5),
-            lataxis=dict(showgrid=True, gridwidth=0.5),
-        ),
-    )
 
-    fig.show(config={"scrollZoom": True, "displayModeBar": True})
-    return fig
+# ---- survey statistics ------------------------------------------------------
+
+def visit_histogram(per_field, output_dir, show=False):
+    counts = per_field["visits"]
+    fig = go.Figure(go.Histogram(x=counts, nbinsx=int(counts.max()) + 1, marker_color="#4169ab"))
+    fig.update_layout(title=f"Distribution of visits per field ({int((counts == 0).sum())} fields never visited)",
+                      xaxis_title="Visits", yaxis_title="Number of fields", bargap=0.05)
+    _finish(fig, Path(output_dir) / "visits_per_field_hist.html", show)
+
+
+def cadence_histograms(cadence, per_field_cadence, output_dir, show=False):
+    """Gaps between initial pointings to the same field, overall and per-field median."""
+    fig = go.Figure(go.Histogram(x=cadence["gap_days"], nbinsx=60, marker_color="#8a63c4",
+                                 name="initial-pointing gaps"))
+    fig.update_layout(title="Cadence: time between initial pointings to the same field",
+                      xaxis_title="Gap (days)", yaxis_title="Count (log)", yaxis_type="log", bargap=0.02)
+    _finish(fig, Path(output_dir) / "cadence_gaps_hist.html", show)
+
+    fig = go.Figure(go.Histogram(x=per_field_cadence["median_gap_days"], nbinsx=40, marker_color="#c48a63"))
+    fig.update_layout(title="Per-field median gap between initial pointings",
+                      xaxis_title="Median gap (days)", yaxis_title="Number of fields")
+    _finish(fig, Path(output_dir) / "median_cadence_per_field_hist.html", show)
+
+
+def cadence_cdf(cadence, output_dir, show=False):
+    gaps = np.sort(cadence["gap_days"].to_numpy())
+    percent = 100.0 * np.arange(1, len(gaps) + 1) / len(gaps)
+    fig = go.Figure(go.Scatter(x=gaps, y=percent, mode="lines", line=dict(color="#4169ab", width=2),
+                               hovertemplate="%{x:.2f} d: %{y:.1f}% of gaps<extra></extra>"))
+    for value, level, label in ((np.median(gaps), 50, "median"), (np.percentile(gaps, 90), 90, "90th pct")):
+        fig.add_hline(y=level, line=dict(width=1, dash="dot", color="#8a63c4"), opacity=0.5)
+        fig.add_vline(x=value, line=dict(width=1, dash="dot", color="#8a63c4"),
+                      annotation_text=f"{label}: {value:.2f} d", annotation_position="top", opacity=0.5)
+    fig.update_layout(title=f"Cadence CDF: initial-pointing gaps shorter than x ({len(gaps)} gaps)",
+                      xaxis_title="Gap between consecutive visits (days)", yaxis_title="% of gaps ≤ x",
+                      xaxis_type="log", height=600)
+    _finish(fig, Path(output_dir) / "cadence_gaps_cdf.html", show)
+
+
+def nightly_summary(nightly, output_dir, show=False):
+    """Images taken and time efficiency for each night."""
+    nightly = nightly.sort_values("night").copy()
+    nightly["time_efficiency_pct"] = 100 * nightly["used_minutes"] / nightly["night_minutes"]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=nightly["night"], y=nightly["images"], name="images", marker_color="#44b8e8"))
+    fig.add_trace(go.Scatter(x=nightly["night"], y=nightly["time_efficiency_pct"], name="time efficiency (%)",
+                             yaxis="y2", mode="lines+markers", line=dict(color="#e652a0")))
+    fig.update_layout(title="Nightly summary", xaxis_title="Plan", yaxis_title="Images",
+                      yaxis2=dict(title="Time efficiency (%)", overlaying="y", side="right", range=[0, 105]),
+                      legend=dict(x=0.01, y=0.99))
+    _finish(fig, Path(output_dir) / "nightly_summary.html", show)

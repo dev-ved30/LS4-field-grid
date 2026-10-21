@@ -8,7 +8,17 @@ import pandas as pd
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
-from ls4.config import FOV_g, GRID_CSV, GRID_DB, min_declination
+from ls4.config import (EXTRAGALACTIC, FOV_g, GRID_CSV, GRID_DB, SOLE, min_declination, sole_bulge,
+                        sole_plane)
+
+
+def program_ids(l_deg, b_deg):
+    """SOLE for fields centered in the Galactic plane or bulge, extragalactic otherwise."""
+    l = (np.asarray(l_deg) + 180) % 360 - 180
+    b = np.abs(np.asarray(b_deg))
+    plane = (sole_plane["l"][0] <= l) & (l <= sole_plane["l"][1]) & (b <= sole_plane["b"])
+    bulge = (np.abs(l) <= sole_bulge["l"]) & (b <= sole_bulge["b"])
+    return np.where(plane | bulge, SOLE, EXTRAGALACTIC)
 
 
 def build_grid():
@@ -25,14 +35,12 @@ def build_grid():
 
     galactic = SkyCoord(df["ra_deg"].to_numpy() * u.deg, df["dec_deg"].to_numpy() * u.deg).galactic
     l, b = galactic.l.to_value(u.deg), galactic.b.to_value(u.deg)
-    galactic_plane = (-72 < l) & (l < 36) & (np.abs(b) < 4)
-    galactic_bulge = (np.abs(l) < 20) & (np.abs(b) < 8)
     # TODO still need to assign high cadence extragalactic fields, and assign program IDs to them.
 
     df["Field Name"] = ra_idx.astype(str) + "_" + dec_idx.astype(str)
     df["l"] = l
     df["b"] = b
-    df["program_id"] = np.where(galactic_plane | galactic_bulge, 0, 1)  # 0: Galactic, 1: Extragalactic
+    df["program_id"] = program_ids(l, b)
     df["last_scheduled_mjd"] = 0.0
     keep = (dec_idx % 2 == 0) & (ra_idx % 2 == 0)
     return df[keep].reset_index(drop=True)
@@ -61,6 +69,8 @@ def load_schedulable(db_path=GRID_DB):
                                  params=(min_declination.to_value(u.deg),))
     if grid.empty:
         raise ValueError(f"No schedulable fields in {db_path}")
+    # Derive programs from the footprint so databases built before it changed stay valid.
+    grid["program_id"] = program_ids(grid["l"], grid["b"])
     return grid
 
 

@@ -35,6 +35,14 @@ max_airmass = 1.6
 default_block_duration = 30 * u.minute  # Also the minimum initial-to-dither revisit time.
 max_cluster_radius = 16 * u.deg  # Keep a block's field centers near its first pointing.
 
+# Survey programs (grid `program_id`).
+SOLE = 0  # Stellar Oscillations, Lensing, and Eruptions: the Galactic plane and bulge.
+EXTRAGALACTIC = 1
+sole_plane = {"l": (-72, 36), "b": 4}  # degrees; l is wrapped to [-180, 180).
+sole_bulge = {"l": 20, "b": 8}  # |l| <= 20, |b| <= 8
+sole_fraction = 0.25  # Target share of each night's pairs.
+sole_cadence = 1 * u.day  # Nominal cadence for SOLE fields.
+
 global_constraints = [AirmassConstraint(max=max_airmass),
                       AtNightConstraint.twilight_civil(),
                       MoonSeparationConstraint(min=15 * u.deg)]

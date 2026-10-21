@@ -9,9 +9,9 @@ from astropy import units as u
 from astropy.coordinates import NonRotationTransformationWarning, SkyCoord
 from astropy.time import Time
 
-from ls4.config import (GRID_DB, LS4, NON_SCIENCE_TARGETS, default_block_duration, exp,
+from ls4.config import (GRID_DB, LS4, NON_SCIENCE_TARGETS, SOLE, default_block_duration, exp,
                         global_constraints, half_field_offset_ra, max_cluster_radius, read_out,
-                        slew_rate)
+                        slew_rate, sole_cadence, sole_fraction)
 from ls4.grid import load_schedulable, record_pairs
 
 warnings.filterwarnings("ignore", category=NonRotationTransformationWarning)
@@ -140,7 +140,20 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     exposure_duration = exp + read_out
     min_revisit = default_block_duration
     total_pairs = 0
-    galactic_pairs = 0
+    sole_pairs = 0
+    # SOLE fields are due again once most of their cadence has passed, and get
+    # priority until they fill their share of the night's pair capacity.
+    sole_due = (programs == SOLE) & (night_start.mjd - last_scheduled >= 0.5 * sole_cadence.to_value(u.day))
+    sole_budget = int(sole_fraction * ((night_end - night_start) / (2 * exposure_duration)).decompose().value)
+    sole_sets = np.full(len(grid), np.inf)
+    if sole_due.any():
+        # When each due field's last initial/dither pair can start, sampled every 10 minutes.
+        samples = night_start + np.arange(0, (night_end - night_start - 2 * min_revisit).to_value(u.min), 10) * u.min
+        idx = np.flatnonzero(sole_due)
+        ok = (visibility_at_slots(coords[idx], samples, exposure_duration) &
+              visibility_at_slots(dithers[idx], samples + min_revisit, exposure_duration))
+        last = ok.shape[1] - 1 - np.argmax(ok[:, ::-1], axis=1)
+        sole_sets[idx] = np.where(ok.any(axis=1), samples.mjd[last], -np.inf)
     previous_coord = None
     previous_end = None
     block_number = 0
@@ -184,14 +197,15 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
                 if not len(available):
                     continue
 
-            if anchor is not None:
-                # Program allocation is a preference within the current sky
-                # cluster; it must not force a jump to a distant field.
-                preferred = 0 if galactic_pairs < 0.25 * (total_pairs + 1) else 1
-                in_program = programs[available] == preferred
-                if np.any(in_program):
-                    available = available[in_program]
-                    slew_degrees = slew_degrees[in_program]
+            # Program allocation is a preference among reachable fields; it
+            # must not force a jump out of the current sky cluster.
+            if sole_pairs < sole_budget:
+                preferred = sole_due[available]
+            else:
+                preferred = programs[available] != SOLE
+            if np.any(preferred):
+                available = available[preferred]
+                slew_degrees = slew_degrees[preferred]
 
             age_days = np.where(last_scheduled[available] <= 0, 30,
                                 np.clip(first_starts[slot].mjd - last_scheduled[available], 0, 30))
@@ -203,6 +217,12 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
                 neighbors = (unit_vectors[available] @ future.T >=
                              np.cos(max_cluster_radius.to_value(u.rad))).sum(axis=1)
                 score = 2 * neighbors + 0.2 * age_days + 0.5 * hour_angle / 90 - 0.4 * slew_degrees
+                fillable = neighbors >= slots - slot
+                if sole_due[available].all() and fillable.any():
+                    # Start SOLE clusters on the field that sets first, so the
+                    # cluster sweeps toward fields that stay up longer, but only
+                    # where enough fields remain visible to fill the block.
+                    score = np.where(fillable, -sole_sets[available] + 1e-3 * score, -np.inf)
             else:
                 # Inside a cluster, favor adjacent fields over distant ones.
                 score = -1.5 * slew_degrees + 0.05 * age_days + 0.2 * hour_angle / 90
@@ -212,7 +232,7 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
             used[choice] = True
             last_choice = choice
             total_pairs += 1
-            galactic_pairs += int(programs[choice] == 0)
+            sole_pairs += int(programs[choice] == SOLE)
 
             first_start = first_starts[slot]
             second_start = second_starts[slot]
@@ -251,5 +271,6 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     pairs = complete_pairs(science_pointings(obs_plan))
     record_pairs(pairs["last_mjd"], db_path)
     assert len(pairs) == completed, "Only complete pairs should be recorded"
-    print(f"Wrote {output_path}: {2 * completed} images in {completed} complete pairs")
+    print(f"Wrote {output_path}: {2 * completed} images in {completed} complete pairs "
+          f"({sole_pairs} SOLE, budget {sole_budget})")
     return obs_plan

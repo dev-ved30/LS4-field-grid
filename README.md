@@ -63,10 +63,27 @@ For each block the scheduler:
   `max_cluster_radius` of it;
 - checks both pointings against all constraints at their start and end times;
 - requires each move to fit within readout plus any idle time (`slew_rate`, `read_out`);
-- prefers galactic fields until they make up about 25% of pairs, without leaving the cluster.
+- gives SOLE fields that are due priority until they fill 25% of the night's pair
+  capacity, without leaving the cluster (see below).
 
 Plans are validated (exactly one initial and one dither per field, at least 30 minutes
 apart, no overlapping rows, all slews feasible) before they are saved.
+
+## Survey programs
+
+Each field's `program_id` comes from its Galactic coordinates (`ls4.grid.program_ids`,
+parameters in `ls4/config.py`):
+
+- **0, SOLE** (Stellar Oscillations, Lensing, and Eruptions): field centers in the plane,
+  −72° ≤ l ≤ 36° and |b| ≤ 4°, or the bulge, |l| ≤ 20° and |b| ≤ 8°. That is 55 fields
+  (~1,280 deg²), 47 of them above the −60° declination limit.
+- **1, extragalactic**: everything else.
+
+SOLE has a nominal 1-day cadence and about 25% of the survey. A SOLE field is due once half
+a day has passed since its last pair. Until the night's SOLE budget is used, due SOLE fields are
+preferred, and a new cluster starts on the due SOLE field that sets first, provided enough
+fields nearby stay visible to fill the block. Programs are derived from `l` and `b` when the
+database is read, so databases built with an older footprint need no rebuild.
 
 ## Plan CSV format
 

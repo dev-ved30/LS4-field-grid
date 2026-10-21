@@ -140,6 +140,8 @@ def write_report(out, summary, fields, replay=None):
         "", "| Metric | Result |", "| --- | ---: |",
         f"| Science images | {int(summary['images'].sum()):,} |",
         f"| Complete initial/dither pairs | {int(summary['complete_pairs'].sum()):,} |",
+        f"| SOLE (Galactic) pairs | {int(summary['sole_pairs'].sum()):,} "
+        f"({summary['sole_pairs'].sum() / summary['complete_pairs'].sum():.1%}) |",
         f"| Unpaired images | {int(summary['unpaired_images'].sum())} |",
         f"| Revisit pairs under 30 minutes | {int(summary['short_pairs'].sum())} |",
         f"| Unused hours | {summary['unused_minutes'].sum() / 60:.2f} |",

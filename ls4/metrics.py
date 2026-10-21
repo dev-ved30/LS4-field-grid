@@ -9,9 +9,9 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from ls4.config import (FOV_length, FOV_width, GRID_CSV, default_block_duration, exp,
+from ls4.config import (FOV_length, FOV_width, GRID_CSV, SOLE, default_block_duration, exp,
                         min_declination, read_out, slew_rate)
-from ls4.grid import load_grid_csv, load_history
+from ls4.grid import load_grid_csv, load_history, program_ids
 from ls4.scheduler import complete_pairs, dither_coords, science_pointings, visibility_at_slots
 
 
@@ -34,11 +34,14 @@ def night_metrics(plan):
         steps = np.degrees(np.arccos(np.clip(cosine, -1, 1)))
     else:
         steps = []
+    grid = load_grid_csv()
+    sole_fields = set(grid.loc[program_ids(grid["l"], grid["b"]) == SOLE, "base_field"])
     slew_speed = slew_rate.to_value("deg/s")
     readout_seconds = read_out.to_value("s")
     return {
         "images": len(science),
         "complete_pairs": len(complete),
+        "sole_pairs": int(complete.index.isin(sole_fields).sum()),
         "unpaired_images": len(science) - 2 * len(complete),
         "short_pairs": short,
         "unused_minutes": plan.loc[plan["target"] == "Unused Time", "duration (minutes)"].sum(),
@@ -250,6 +253,11 @@ def analyze_survey(plan_paths, output_dir, grid_csv=GRID_CSV, db_path=None,
         f'mean visits/field    : {observed["visits"].mean():.2f}',
     ]
     if len(cadence):
+        sole_gaps = cadence.loc[cadence["base_field"].isin(
+            per_field.loc[per_field["program_id"] == SOLE, "base_field"]), "gap_days"]
+        if len(sole_gaps):
+            lines.append(f'SOLE cadence         : median {sole_gaps.median():.2f} d, '
+                         f'{(sole_gaps < 1.5).mean():.0%} of gaps under 1.5 d')
         lines.append(f'initial-visit cadence: median {cadence["gap_days"].median():.2f} d, '
                      f'mean {cadence["gap_days"].mean():.2f} d, '
                      f'max {cadence["gap_days"].max():.2f} d')

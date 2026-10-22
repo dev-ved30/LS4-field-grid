@@ -223,8 +223,10 @@ def slack_escape(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def section(text, fields=None):
-    block = {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}}
+def section(text=None, fields=None):
+    block = {"type": "section"}
+    if text:
+        block["text"] = {"type": "mrkdwn", "text": text[:3000]}
     if fields:
         block["fields"] = [{"type": "mrkdwn", "text": field[:2000]} for field in fields[:10]]
     return block
@@ -261,8 +263,6 @@ def obsplan_link(publication):
 
 def slack_message(manifest, publication=None, *, job_status="success", run_url=""):
     """Plain-text version: the notification preview and fallback for `slack_blocks`."""
-    from ls4.weather import forecast_summary
-
     publication = publication or {}
     valid = manifest.get("generation") == "success"
     published = bool(publication.get("url"))
@@ -270,8 +270,7 @@ def slack_message(manifest, publication=None, *, job_status="success", run_url="
     status = notification_status(manifest, publication, job_status)
     lines = [f"{STATUS_EMOJI[status]} *LS4 night {manifest.get('evening_date', 'unknown')} — {status}*"]
     if valid:
-        lines.append(f"Plan generated and validated: {manifest['images']} exposures, "
-                     f"{manifest['complete_pairs']} complete pairs.")
+        lines.append(f"Plan generated and validated: {manifest['images']} exposures.")
     else:
         lines.append(f"Generation failed at {manifest.get('stage', 'setup')}. "
                      "No new operational plan was published.")
@@ -281,9 +280,15 @@ def slack_message(manifest, publication=None, *, job_status="success", run_url="
         lines.append("The plan is published, but another workflow step failed; inspect the run logs.")
     if valid and not published:
         lines.append("Publication failed or was disabled; no new operational package link is available.")
-    lines.append("Cadence history: generated plans (assumed execution).")
-    if manifest.get("weather"):
-        lines.append(slack_escape(forecast_summary(manifest["weather"])))
+    weather = manifest.get("weather")
+    if weather and weather.get("status") == "available":
+        w = weather["summary"]
+        lines.append(f"Temperature {w['temperature_min_c']:.1f}–{w['temperature_max_c']:.1f} °C; "
+                     f"max cloud {w['cloud_cover_max_percent']:.0f}%; "
+                     f"max rain chance {w['precipitation_probability_max_percent']:.0f}%; "
+                     f"max humidity {w['humidity_max_percent']:.0f}%.")
+    elif weather:
+        lines.append("Weather unavailable: " + slack_escape(weather.get("error", "no forecast retrieved")))
     for warning in degraded:
         lines.append("Attention: " + slack_escape(warning))
     if published:
@@ -302,12 +307,11 @@ def weather_block(weather):
     s = weather["summary"]
     cloud = s["cloud_cover_max_percent"]
     sky = ":sunny:" if cloud < 20 else ":partly_sunny:" if cloud < 60 else ":cloud:"
-    return section(":earth_americas: *La Silla forecast*", [
+    return section(fields=[
         f":thermometer: *Temperature*\n{s['temperature_min_c']:.1f} to {s['temperature_max_c']:.1f} °C",
         f"{sky} *Max cloud*\n{cloud:.0f}%",
         f":umbrella_with_rain_drops: *Max rain chance*\n{s['precipitation_probability_max_percent']:.0f}%",
         f":droplet: *Max humidity*\n{s['humidity_max_percent']:.0f}%",
-        f":dash: *Max wind / gust*\n{s['wind_max_ms']:.1f} / {s['gust_max_ms']:.1f} m/s",
     ])
 
 
@@ -319,9 +323,8 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
     status = notification_status(manifest, publication, job_status)
     blocks = [header(f":telescope: LS4 night {manifest.get('evening_date', 'unknown')}")]
     if valid:
-        blocks.append(section(f"{STATUS_EMOJI[status]} *{status.title()}* — plan generated and validated", [
-            f":camera: *Exposures*\n{manifest['images']}",
-            f":link: *Complete pairs*\n{manifest['complete_pairs']}"]))
+        blocks.append(section(f"{STATUS_EMOJI[status]} *{status.title()}* — "
+                              f"{manifest['images']} exposures planned and validated"))
     else:
         text = (f"{STATUS_EMOJI[status]} *Failed* at `{manifest.get('stage', 'setup')}` — "
                 "no new operational plan was published.")
@@ -336,16 +339,14 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
         blocks.append(section(":no_entry: Publication failed or was disabled; "
                               "no new operational package link is available."))
     if manifest.get("weather"):
-        blocks.append(weather_block(manifest["weather"]))
+        blocks.extend([{"type": "divider"}, weather_block(manifest["weather"])])
     if manifest.get("warnings"):
         blocks.append(section(":warning: *Needs attention*\n"
                               + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
     obsplan = obsplan_link(publication) if published else None
     if obsplan:
-        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>* — telescope input"))
+        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>*"))
     blocks.append({"type": "divider"})
-    blocks.append(context(":repeat: Cadence history: generated plans (assumed execution), "
-                          "not confirmed observations."))
     blocks.extend(github_links([(publication.get("url"), ":package: Nightly package & weather report"),
                                 (run_url, ":scroll: Run logs")]))
     return blocks

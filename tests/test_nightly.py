@@ -249,6 +249,22 @@ def test_slack_private_gif_upload_and_failure_fallback(tmp_path, monkeypatch):
     assert calls[-1][0] == "chat.postMessage" and "GIF delivery" in calls[-1][1]["text"]
 
 
+def test_slack_file_upload_methods_are_form_encoded(monkeypatch):
+    from urllib.parse import parse_qs
+
+    sent = []
+    monkeypatch.setattr(automation, "request_bytes", lambda url, **kwargs: sent.append((url, kwargs)) or b'{"ok": true}')
+    client = automation.Slack("xoxb-test", "C0CB1J9LZPF")
+    client.api("files.getUploadURLExternal", {"filename": "night.gif", "length": 6})
+    client.api("files.completeUploadExternal", {"files": [{"id": "F123"}], "channel_id": "C0CB1J9LZPF"})
+    client.api("chat.postMessage", {"channel": "C0CB1J9LZPF", "text": "hi"})
+    (_, upload), (_, complete), (_, post) = sent
+    assert upload["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+    assert parse_qs(upload["data"].decode()) == {"filename": ["night.gif"], "length": ["6"]}
+    assert json.loads(parse_qs(complete["data"].decode())["files"][0]) == [{"id": "F123"}]
+    assert post["headers"]["Content-Type"] == "application/json"
+
+
 def test_notification_distinguishes_generation_publication_and_degradation():
     manifest = {"generation": "success", "evening_date": "2026-10-21", "images": 200,
                 "complete_pairs": 100, "warnings": []}

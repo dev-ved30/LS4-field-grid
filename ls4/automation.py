@@ -156,9 +156,19 @@ class Slack:
         self.channel = channel
         self.headers = {"Authorization": f"Bearer {token}"}
 
+    # Despite the docs, these reject JSON bodies (invalid_arguments); send them
+    # form-encoded as slack_sdk does, with structured values as JSON strings.
+    FORM_METHODS = {"files.getUploadURLExternal", "files.completeUploadExternal"}
+
     def api(self, method, payload):
-        result = request_json(f"https://slack.com/api/{method}", method="POST",
-                              payload=payload, headers=self.headers)
+        url = f"https://slack.com/api/{method}"
+        if method in self.FORM_METHODS:
+            form = {key: value if isinstance(value, str) else json.dumps(value)
+                    for key, value in payload.items()}
+            result = json.loads(request_bytes(url, method="POST", data=urlencode(form).encode(), headers={
+                **self.headers, "Content-Type": "application/x-www-form-urlencoded"}))
+        else:
+            result = request_json(url, method="POST", payload=payload, headers=self.headers)
         if not result.get("ok"):
             # Slack's error code contains no token or request body.
             raise RuntimeError(f"Slack {method}: {result.get('error', 'unknown_error')}")

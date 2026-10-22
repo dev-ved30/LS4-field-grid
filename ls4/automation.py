@@ -302,7 +302,7 @@ def weather_block(weather):
     s = weather["summary"]
     cloud = s["cloud_cover_max_percent"]
     sky = ":sunny:" if cloud < 20 else ":partly_sunny:" if cloud < 60 else ":cloud:"
-    return section(":earth_americas: *La Silla forecast* _(advisory; site limits are authoritative)_", [
+    return section(":earth_americas: *La Silla forecast*", [
         f":thermometer: *Temperature*\n{s['temperature_min_c']:.1f} to {s['temperature_max_c']:.1f} °C",
         f"{sky} *Max cloud*\n{cloud:.0f}%",
         f":umbrella_with_rain_drops: *Max rain chance*\n{s['precipitation_probability_max_percent']:.0f}%",

@@ -249,6 +249,44 @@ def test_slack_private_gif_upload_and_failure_fallback(tmp_path, monkeypatch):
     assert calls[-1][0] == "chat.postMessage" and "GIF delivery" in calls[-1][1]["text"]
 
 
+def test_slack_blocks_layout():
+    weather = {"status": "available", "summary": {
+        "temperature_min_c": 8.0, "temperature_max_c": 12.5, "cloud_cover_max_percent": 45,
+        "precipitation_probability_max_percent": 3, "humidity_max_percent": 60,
+        "wind_max_ms": 6.2, "gust_max_ms": 9.8}}
+    manifest = {"generation": "success", "evening_date": "2026-10-21", "images": 200,
+                "complete_pairs": 100, "warnings": ["IERS <stale> & old"], "weather": weather}
+    publication = {"url": "https://github.com/x/releases/1",
+                   "assets": {"20261022.obsplan": "https://github.com/x/20261022.obsplan"}}
+    blocks = automation.slack_blocks(manifest, publication, run_url="https://github.com/x/runs/1")
+    rendered = json.dumps(blocks)
+    assert blocks[0]["type"] == "header" and "2026-10-21" in blocks[0]["text"]["text"]
+    assert ":warning: *Partial Success*" in rendered and ":partly_sunny: *Max cloud*" in rendered
+    assert "IERS &lt;stale&gt; &amp; old" in rendered
+    assert "<https://github.com/x/20261022.obsplan|Download 20261022.obsplan>" in rendered
+    footer = blocks[-1]["elements"]
+    assert footer[0]["image_url"] == automation.GITHUB_LOGO and "Run logs" in footer[1]["text"]
+
+    failed = json.dumps(automation.slack_blocks({"stage": "history", "error": "bad `tick`"}))
+    assert ":x: *Failed* at `history`" in failed and "bad 'tick'" in failed
+    assert "image_url" not in failed  # no links, so no GitHub footer
+
+
+def test_slack_post_falls_back_to_plain_text_on_invalid_blocks():
+    client = automation.Slack("unused", "C0CB1J9LZPF")
+    calls = []
+
+    def api(method, payload):
+        calls.append(payload)
+        if "blocks" in payload:
+            raise RuntimeError("Slack chat.postMessage: invalid_blocks")
+        return {"ok": True}
+
+    client.api = api
+    client.send("plain", blocks=[automation.section("rich")])
+    assert "blocks" in calls[0] and "blocks" not in calls[1] and calls[1]["text"] == "plain"
+
+
 def test_slack_file_upload_methods_are_form_encoded(monkeypatch):
     from urllib.parse import parse_qs
 

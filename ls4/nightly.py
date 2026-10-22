@@ -16,7 +16,8 @@ import tempfile
 import warnings
 from zoneinfo import ZoneInfo
 
-from ls4.automation import GitHub, Slack, sha256, slack_message, write_json
+from ls4.automation import (GitHub, Slack, github_links, header, section, sha256, slack_blocks,
+                            slack_message, write_json)
 
 ROOT = Path(__file__).resolve().parent.parent
 HISTORY_NOTE = "Generated plans, assuming execution; not confirmed observing results."
@@ -307,13 +308,15 @@ def main(argv=None):
             "stage": "setup or dependency installation"}
         pub_path = args.output_dir / "publication.json"
         publication = json.loads(pub_path.read_text()) if pub_path.exists() else None
-        text = slack_message(manifest, publication, job_status=args.job_status,
-                             run_url=os.environ.get("LS4_RUN_URL", ""))
+        options = dict(job_status=args.job_status, run_url=os.environ.get("LS4_RUN_URL", ""))
         gif = args.output_dir / manifest["gif"] if manifest.get("gif") else None
-        Slack(os.environ.get("SLACK_BOT_TOKEN", ""), os.environ["SLACK_CHANNEL_ID"]).send(text, gif)
+        Slack(os.environ.get("SLACK_BOT_TOKEN", ""), os.environ["SLACK_CHANNEL_ID"]).send(
+            slack_message(manifest, publication, **options), gif,
+            blocks=slack_blocks(manifest, publication, **options))
     elif args.command == "check":
         slack = Slack(os.environ.get("SLACK_BOT_TOKEN", ""), os.environ["SLACK_CHANNEL_ID"])
         day = evening_date(args.date)
+        release = None
         try:
             client = github_client()
             release = client.latest_nightly(day, before=False)
@@ -322,15 +325,17 @@ def main(argv=None):
                 if manifest.get("generation") == "success" and not manifest.get("warnings"):
                     print(f"Published plan exists for {day}: {release['html_url']}")
                     return
-            text = (f"*LS4 deadline check — {day}*\n"
-                    "No complete nightly package is available, or it requires attention. "
-                    "Check the nightly workflow and generate/review the plan manually.")
-            if release:
-                text += f"\n<{release['html_url']}|Available package>"
+            problem = ("No complete nightly package is available, or it requires attention. "
+                       "Check the nightly workflow and generate/review the plan manually.")
         except Exception as exc:
-            text = f"*LS4 deadline check — {day}*\nUnable to verify the nightly package ({type(exc).__name__})."
-        text += f"\n<{os.environ['LS4_RUN_URL']}|Deadline-check logs>"
-        slack.send(text)
+            problem = f"Unable to verify the nightly package ({type(exc).__name__})."
+        package = release["html_url"] if release else None
+        links = [(package, ":package: Available package"),
+                 (os.environ["LS4_RUN_URL"], ":scroll: Deadline-check logs")]
+        text = f":alarm_clock: *LS4 deadline check — {day}*\n{problem}" + "".join(
+            f"\n<{url}|{label.split(' ', 1)[1]}>" for url, label in links if url)
+        slack.send(text, blocks=[header(f":alarm_clock: LS4 deadline check — {day}"),
+                                 section(":rotating_light: " + problem), *github_links(links)])
         raise RuntimeError("Nightly deadline check needs attention")
 
 

@@ -9,6 +9,7 @@ import json
 import mimetypes
 from pathlib import Path
 import re
+import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
@@ -174,11 +175,25 @@ class Slack:
             raise RuntimeError(f"Slack {method}: {result.get('error', 'unknown_error')}")
         return result
 
-    def send(self, text, gif=None):
-        """Share a real GIF upload, including in private channels/repositories."""
+    def post(self, text, blocks=None):
+        """Post rich blocks, but never let a formatting rejection silence an alert."""
+        message = {"channel": self.channel, "text": text, "unfurl_links": False, "unfurl_media": False}
+        if blocks:
+            try:
+                return self.api("chat.postMessage", {**message, "blocks": blocks})
+            except RuntimeError as exc:
+                if "invalid_blocks" not in str(exc):
+                    raise
+                print(f"{exc}; resending as plain text", file=sys.stderr)
+        return self.api("chat.postMessage", message)
+
+    def send(self, text, gif=None, blocks=None):
+        """Share a real GIF upload, including in private channels/repositories.
+
+        `text` is the notification preview and plain-text fallback for `blocks`.
+        """
         if gif is None:
-            return self.api("chat.postMessage", {"channel": self.channel, "text": text,
-                                                "unfurl_links": False, "unfurl_media": False})
+            return self.post(text, blocks)
         gif = Path(gif)
         try:
             upload = self.api("files.getUploadURLExternal", {
@@ -187,15 +202,20 @@ class Slack:
             })
             request_bytes(upload["upload_url"], method="POST", data=gif.read_bytes(),
                           headers={"Content-Type": "application/octet-stream"})
+            # Slack ignores initial_comment when blocks are supplied.
+            message = {"blocks": blocks} if blocks else {"initial_comment": text}
             return self.api("files.completeUploadExternal", {
                 "files": [{"id": upload["file_id"], "title": "LS4 nightly observing plan"}],
-                "channel_id": self.channel, "initial_comment": text,
+                "channel_id": self.channel, **message,
             })
         except Exception:
-            self.api("chat.postMessage", {"channel": self.channel,
-                "text": text + "\nGIF delivery to Slack failed; use the package link.",
-                "unfurl_links": False, "unfurl_media": False})
+            note = ":warning: GIF delivery to Slack failed; use the package link."
+            self.post(text + "\n" + note, blocks and [*blocks, context(note)])
             raise
+
+
+GITHUB_LOGO = "https://github.githubassets.com/favicons/favicon.png"
+STATUS_EMOJI = {"SUCCESS": ":white_check_mark:", "PARTIAL SUCCESS": ":warning:", "FAILED": ":x:"}
 
 
 def slack_escape(text):
@@ -203,18 +223,52 @@ def slack_escape(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def section(text, fields=None):
+    block = {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}}
+    if fields:
+        block["fields"] = [{"type": "mrkdwn", "text": field[:2000]} for field in fields[:10]]
+    return block
+
+
+def context(*texts):
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": t[:3000]} for t in texts]}
+
+
+def header(text):
+    return {"type": "header", "text": {"type": "plain_text", "text": text[:150], "emoji": True}}
+
+
+def github_links(links):
+    """Context footer: the GitHub mark, then `(url, label)` links; empty URLs are skipped."""
+    links = [f"<{url}|{label}>" for url, label in links if url]
+    if not links:
+        return []
+    return [{"type": "context", "elements": [
+        {"type": "image", "image_url": GITHUB_LOGO, "alt_text": "GitHub"},
+        {"type": "mrkdwn", "text": "   ·   ".join(links)}]}]
+
+
+def notification_status(manifest, publication, job_status):
+    if manifest.get("generation") == "success" and (publication or {}).get("url"):
+        return "PARTIAL SUCCESS" if manifest.get("warnings") or job_status != "success" else "SUCCESS"
+    return "FAILED"
+
+
+def obsplan_link(publication):
+    return next(((name, url) for name, url in (publication or {}).get("assets", {}).items()
+                 if name.endswith(".obsplan")), None)
+
+
 def slack_message(manifest, publication=None, *, job_status="success", run_url=""):
+    """Plain-text version: the notification preview and fallback for `slack_blocks`."""
     from ls4.weather import forecast_summary
 
     publication = publication or {}
     valid = manifest.get("generation") == "success"
     published = bool(publication.get("url"))
     degraded = manifest.get("warnings", [])
-    if valid and published:
-        status = "PARTIAL SUCCESS" if degraded or job_status != "success" else "SUCCESS"
-    else:
-        status = "FAILED"
-    lines = [f"*LS4 night {manifest.get('evening_date', 'unknown')} — {status}*"]
+    status = notification_status(manifest, publication, job_status)
+    lines = [f"{STATUS_EMOJI[status]} *LS4 night {manifest.get('evening_date', 'unknown')} — {status}*"]
     if valid:
         lines.append(f"Plan generated and validated: {manifest['images']} exposures, "
                      f"{manifest['complete_pairs']} complete pairs.")
@@ -234,10 +288,64 @@ def slack_message(manifest, publication=None, *, job_status="success", run_url="
         lines.append("Attention: " + slack_escape(warning))
     if published:
         lines.append(f"<{publication['url']}|Nightly package and weather report>")
-        obsplan = next((url for name, url in publication.get("assets", {}).items()
-                        if name.endswith(".obsplan")), None)
-        if obsplan:
-            lines.append(f"<{obsplan}|Download telescope .obsplan>")
+        if obsplan_link(publication):
+            lines.append(f"<{obsplan_link(publication)[1]}|Download telescope .obsplan>")
     if run_url:
         lines.append(f"<{run_url}|Run logs>")
     return "\n".join(lines)
+
+
+def weather_block(weather):
+    if weather.get("status") != "available":
+        return section(":grey_question: *Weather unavailable* — "
+                       + slack_escape(weather.get("error", "no forecast retrieved"))[:500])
+    s = weather["summary"]
+    cloud = s["cloud_cover_max_percent"]
+    sky = ":sunny:" if cloud < 20 else ":partly_sunny:" if cloud < 60 else ":cloud:"
+    return section(":earth_americas: *La Silla forecast* _(advisory; site limits are authoritative)_", [
+        f":thermometer: *Temperature*\n{s['temperature_min_c']:.1f} to {s['temperature_max_c']:.1f} °C",
+        f"{sky} *Max cloud*\n{cloud:.0f}%",
+        f":umbrella_with_rain_drops: *Max rain chance*\n{s['precipitation_probability_max_percent']:.0f}%",
+        f":droplet: *Max humidity*\n{s['humidity_max_percent']:.0f}%",
+        f":dash: *Max wind / gust*\n{s['wind_max_ms']:.1f} / {s['gust_max_ms']:.1f} m/s",
+    ])
+
+
+def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""):
+    """Block Kit layout of the same content as `slack_message`."""
+    publication = publication or {}
+    valid = manifest.get("generation") == "success"
+    published = bool(publication.get("url"))
+    status = notification_status(manifest, publication, job_status)
+    blocks = [header(f":telescope: LS4 night {manifest.get('evening_date', 'unknown')}")]
+    if valid:
+        blocks.append(section(f"{STATUS_EMOJI[status]} *{status.title()}* — plan generated and validated", [
+            f":camera: *Exposures*\n{manifest['images']}",
+            f":link: *Complete pairs*\n{manifest['complete_pairs']}"]))
+    else:
+        text = (f"{STATUS_EMOJI[status]} *Failed* at `{manifest.get('stage', 'setup')}` — "
+                "no new operational plan was published.")
+        if manifest.get("error"):
+            # Backticks would close the code block early.
+            text += "\n```" + slack_escape(str(manifest["error"])[:500]).replace("`", "'") + "```"
+        blocks.append(section(text))
+    if valid and published and job_status != "success":
+        blocks.append(section(":rotating_light: The plan is published, but another workflow step "
+                              "failed; inspect the run logs."))
+    if valid and not published:
+        blocks.append(section(":no_entry: Publication failed or was disabled; "
+                              "no new operational package link is available."))
+    if manifest.get("weather"):
+        blocks.append(weather_block(manifest["weather"]))
+    if manifest.get("warnings"):
+        blocks.append(section(":warning: *Needs attention*\n"
+                              + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
+    obsplan = obsplan_link(publication) if published else None
+    if obsplan:
+        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>* — telescope input"))
+    blocks.append({"type": "divider"})
+    blocks.append(context(":repeat: Cadence history: generated plans (assumed execution), "
+                          "not confirmed observations."))
+    blocks.extend(github_links([(publication.get("url"), ":package: Nightly package & weather report"),
+                                (run_url, ":scroll: Run logs")]))
+    return blocks

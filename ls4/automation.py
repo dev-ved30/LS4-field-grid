@@ -214,7 +214,6 @@ class Slack:
             raise
 
 
-GITHUB_LOGO = "https://github.githubassets.com/favicons/favicon.png"
 STATUS_EMOJI = {"SUCCESS": ":white_check_mark:", "PARTIAL SUCCESS": ":warning:", "FAILED": ":x:"}
 
 
@@ -240,14 +239,15 @@ def header(text):
     return {"type": "header", "text": {"type": "plain_text", "text": text[:150], "emoji": True}}
 
 
-def github_links(links):
-    """Context footer: the GitHub mark, then `(url, label)` links; empty URLs are skipped."""
+def footer_links(links):
+    """Context footer of `(url, label)` links; empty URLs are skipped."""
     links = [f"<{url}|{label}>" for url, label in links if url]
-    if not links:
-        return []
-    return [{"type": "context", "elements": [
-        {"type": "image", "image_url": GITHUB_LOGO, "alt_text": "GitHub"},
-        {"type": "mrkdwn", "text": "   ·   ".join(links)}]}]
+    return [context("   ·   ".join(links))] if links else []
+
+
+def mention(user):
+    """` <@U…>` to tag someone on an unsuccessful run; ignored unless a Slack user ID."""
+    return f" <@{user}>" if user and re.fullmatch(r"[UW][A-Z0-9]+", user) else ""
 
 
 def notification_status(manifest, publication, job_status):
@@ -261,14 +261,15 @@ def obsplan_link(publication):
                  if name.endswith(".obsplan")), None)
 
 
-def slack_message(manifest, publication=None, *, job_status="success", run_url=""):
+def slack_message(manifest, publication=None, *, job_status="success", run_url="", alert_user=None):
     """Plain-text version: the notification preview and fallback for `slack_blocks`."""
     publication = publication or {}
     valid = manifest.get("generation") == "success"
     published = bool(publication.get("url"))
     degraded = manifest.get("warnings", [])
     status = notification_status(manifest, publication, job_status)
-    lines = [f"{STATUS_EMOJI[status]} *LS4 night {manifest.get('evening_date', 'unknown')} — {status}*"]
+    tag = mention(alert_user) if status != "SUCCESS" else ""
+    lines = [f"{STATUS_EMOJI[status]} *LS4 night {manifest.get('evening_date', 'unknown')} — {status}*{tag}"]
     if valid:
         lines.append(f"Plan generated and validated: {manifest['images']} exposures.")
     else:
@@ -315,19 +316,20 @@ def weather_block(weather):
     ])
 
 
-def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""):
+def slack_blocks(manifest, publication=None, *, job_status="success", run_url="", alert_user=None):
     """Block Kit layout of the same content as `slack_message`."""
     publication = publication or {}
     valid = manifest.get("generation") == "success"
     published = bool(publication.get("url"))
     status = notification_status(manifest, publication, job_status)
-    blocks = [header(f":telescope: LS4 night {manifest.get('evening_date', 'unknown')}")]
+    tag = mention(alert_user) if status != "SUCCESS" else ""
+    blocks = [header(f"LS4 night {manifest.get('evening_date', 'unknown')}")]
     if valid:
         blocks.append(section(f"{STATUS_EMOJI[status]} *{status.title()}* — "
-                              f"{manifest['images']} exposures planned and validated"))
+                              f"{manifest['images']} exposures planned and validated{tag}"))
     else:
         text = (f"{STATUS_EMOJI[status]} *Failed* at `{manifest.get('stage', 'setup')}` — "
-                "no new operational plan was published.")
+                f"no new operational plan was published.{tag}")
         if manifest.get("error"):
             # Backticks would close the code block early.
             text += "\n```" + slack_escape(str(manifest["error"])[:500]).replace("`", "'") + "```"
@@ -345,8 +347,8 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
                               + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
     obsplan = obsplan_link(publication) if published else None
     if obsplan:
-        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>*"))
+        blocks.append(section(f"*<{obsplan[1]}|Download {obsplan[0]}>*"))
     blocks.append({"type": "divider"})
-    blocks.extend(github_links([(publication.get("url"), ":package: Nightly package & weather report"),
-                                (run_url, ":scroll: Run logs")]))
+    blocks.extend(footer_links([(publication.get("url"), "Nightly package & weather report"),
+                                (run_url, "Run logs")]))
     return blocks

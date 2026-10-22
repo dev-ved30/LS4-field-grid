@@ -321,7 +321,7 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
     valid = manifest.get("generation") == "success"
     published = bool(publication.get("url"))
     status = notification_status(manifest, publication, job_status)
-    blocks = [header(f":telescope: LS4 night {manifest.get('evening_date', 'unknown')}")]
+    blocks = [header(f"LS4 night {manifest.get('evening_date', 'unknown')}")]
     if valid:
         blocks.append(section(f"{STATUS_EMOJI[status]} *{status.title()}* — "
                               f"{manifest['images']} exposures planned and validated"))

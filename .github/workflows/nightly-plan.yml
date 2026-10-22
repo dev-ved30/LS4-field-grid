@@ -88,7 +88,7 @@ jobs:
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID || 'C0CB1J9LZPF' }}
-          SLACK_ALERT_USER: ${{ vars.SLACK_ALERT_USER || 'U07RY6EBXHD' }}
+          SLACK_ALERT_USER: ${{ vars.SLACK_ALERT_USER || 'U0888078546' }}
           LS4_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           NIGHTLY_STATUS: ${{ needs.nightly.result }}
           EVENING_DATE: ${{ inputs.date }}

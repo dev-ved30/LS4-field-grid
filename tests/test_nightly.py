@@ -259,7 +259,7 @@ def test_slack_blocks_layout():
     publication = {"url": "https://github.com/x/releases/1",
                    "assets": {"20261022.obsplan": "https://github.com/x/20261022.obsplan"}}
     blocks = automation.slack_blocks(manifest, publication, run_url="https://github.com/x/runs/1",
-                                     alert_user="U07RY6EBXHD")
+                                     alert_user="U0888078546")
     rendered = json.dumps(blocks)
     assert blocks[0]["type"] == "header" and "2026-10-21" in blocks[0]["text"]["text"]
     assert ":warning: *Partial Success*" in rendered and ":partly_sunny: *Max cloud*" in rendered
@@ -267,17 +267,17 @@ def test_slack_blocks_layout():
     assert "<https://github.com/x/20261022.obsplan|Download 20261022.obsplan>" in rendered
     footer = blocks[-1]["elements"]
     assert len(footer) == 1 and "Run logs" in footer[0]["text"]
-    assert "validated <@U07RY6EBXHD>" in rendered  # partial success tags the operator
+    assert "validated <@U0888078546>" in rendered  # partial success tags the operator
 
     failed = json.dumps(automation.slack_blocks({"stage": "history", "error": "bad `tick`"},
-                                                alert_user="U07RY6EBXHD"))
+                                                alert_user="U0888078546"))
     assert ":x: *Failed* at `history`" in failed and "bad 'tick'" in failed
-    assert "<@U07RY6EBXHD>" in failed and '"context"' not in failed  # no links, so no footer
+    assert "<@U0888078546>" in failed and '"context"' not in failed  # no links, so no footer
 
     manifest["warnings"] = []
-    clean = automation.slack_blocks(manifest, publication, alert_user="U07RY6EBXHD")
+    clean = automation.slack_blocks(manifest, publication, alert_user="U0888078546")
     assert "<@" not in json.dumps(clean)  # success never tags
-    assert "<@" not in automation.slack_message(manifest, publication, alert_user="U07RY6EBXHD")
+    assert "<@" not in automation.slack_message(manifest, publication, alert_user="U0888078546")
     assert automation.mention("not-an-id") == "" and automation.mention(None) == ""
 
 

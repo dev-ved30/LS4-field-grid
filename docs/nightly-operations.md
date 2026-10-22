@@ -18,7 +18,7 @@ weather summary, and links. A separate deadline check runs at **19:47 UTC**.
    repository secret **SLACK_BOT_TOKEN**. Enter it directly in GitHub, never in chat
    or a tracked file. Optionally set repository variable **SLACK_CHANNEL_ID** to
    override the default channel, and **SLACK_ALERT_USER** to the Slack member ID
-   tagged on partial, failed, and deadline-check messages (default `U07RY6EBXHD`).
+   tagged on partial, failed, and deadline-check messages (default `U0888078546`).
 4. Enable GitHub Actions and allow the workflow's `contents: write` permission so
    its built-in token can create releases. No personal GitHub token is needed.
 5. Run the workflow manually with **publish unchecked** on `v2` or the default

@@ -223,8 +223,10 @@ def slack_escape(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def section(text, fields=None):
-    block = {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}}
+def section(text=None, fields=None):
+    block = {"type": "section"}
+    if text:
+        block["text"] = {"type": "mrkdwn", "text": text[:3000]}
     if fields:
         block["fields"] = [{"type": "mrkdwn", "text": field[:2000]} for field in fields[:10]]
     return block
@@ -302,12 +304,11 @@ def weather_block(weather):
     s = weather["summary"]
     cloud = s["cloud_cover_max_percent"]
     sky = ":sunny:" if cloud < 20 else ":partly_sunny:" if cloud < 60 else ":cloud:"
-    return section(":earth_americas: *La Silla forecast*", [
+    return section(fields=[
         f":thermometer: *Temperature*\n{s['temperature_min_c']:.1f} to {s['temperature_max_c']:.1f} °C",
         f"{sky} *Max cloud*\n{cloud:.0f}%",
         f":umbrella_with_rain_drops: *Max rain chance*\n{s['precipitation_probability_max_percent']:.0f}%",
         f":droplet: *Max humidity*\n{s['humidity_max_percent']:.0f}%",
-        f":dash: *Max wind / gust*\n{s['wind_max_ms']:.1f} / {s['gust_max_ms']:.1f} m/s",
     ])
 
 
@@ -336,16 +337,14 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
         blocks.append(section(":no_entry: Publication failed or was disabled; "
                               "no new operational package link is available."))
     if manifest.get("weather"):
-        blocks.append(weather_block(manifest["weather"]))
+        blocks.extend([{"type": "divider"}, weather_block(manifest["weather"])])
     if manifest.get("warnings"):
         blocks.append(section(":warning: *Needs attention*\n"
                               + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
     obsplan = obsplan_link(publication) if published else None
     if obsplan:
-        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>* — telescope input"))
+        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>*"))
     blocks.append({"type": "divider"})
-    blocks.append(context(":repeat: Cadence history: generated plans (assumed execution), "
-                          "not confirmed observations."))
     blocks.extend(github_links([(publication.get("url"), ":package: Nightly package & weather report"),
                                 (run_url, ":scroll: Run logs")]))
     return blocks

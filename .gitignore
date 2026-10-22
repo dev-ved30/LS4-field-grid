@@ -1,0 +1,17 @@
+# Generated runs, simulations, stats, and animations
+outputs/
+
+# Local scheduling database (rebuild with the grid builder)
+assets/*.db
+
+# Python / editor
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+.vscode/
+.DS_Store
+
+# Large data products
+*.fits
+*.gif

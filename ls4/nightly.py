@@ -330,10 +330,10 @@ def main(argv=None):
         except Exception as exc:
             problem = f"Unable to verify the nightly package ({type(exc).__name__})."
         package = release["html_url"] if release else None
-        links = [(package, ":package: Available package"),
-                 (os.environ["LS4_RUN_URL"], ":scroll: Deadline-check logs")]
+        links = [(package, "Available package"),
+                 (os.environ["LS4_RUN_URL"], "Deadline-check logs")]
         text = f":alarm_clock: *LS4 deadline check — {day}*\n{problem}" + "".join(
-            f"\n<{url}|{label.split(' ', 1)[1]}>" for url, label in links if url)
+            f"\n<{url}|{label}>" for url, label in links if url)
         slack.send(text, blocks=[header(f":alarm_clock: LS4 deadline check — {day}"),
                                  section(":rotating_light: " + problem), *github_links(links)])
         raise RuntimeError("Nightly deadline check needs attention")

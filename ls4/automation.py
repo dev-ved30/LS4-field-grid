@@ -345,8 +345,8 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
                               + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
     obsplan = obsplan_link(publication) if published else None
     if obsplan:
-        blocks.append(section(f":inbox_tray: *<{obsplan[1]}|Download {obsplan[0]}>*"))
+        blocks.append(section(f"*<{obsplan[1]}|Download {obsplan[0]}>*"))
     blocks.append({"type": "divider"})
-    blocks.extend(github_links([(publication.get("url"), ":package: Nightly package & weather report"),
-                                (run_url, ":scroll: Run logs")]))
+    blocks.extend(github_links([(publication.get("url"), "Nightly package & weather report"),
+                                (run_url, "Run logs")]))
     return blocks

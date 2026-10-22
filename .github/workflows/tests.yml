@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  push:
+    paths:
+      - 'ls4/**'
+      - 'tests/**'
+      - 'assets/**'
+      - 'requirements-nightly.lock'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'ls4/**'
+      - 'tests/**'
+      - 'assets/**'
+      - 'requirements-nightly.lock'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-nightly.lock
+      - run: python -m pip install --require-hashes -r requirements-nightly.lock
+      - run: python -m pytest -q

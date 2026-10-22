@@ -5,6 +5,7 @@ Commands:
     plan        Schedule one night and record it in the grid database
     simulate    Schedule consecutive nights (or replay saved plans) on a fresh database
     analyze     Survey statistics, cadence, and sky maps for a set of plans
+    bands       Sky coverage and cadence in g, i, and z for a set of plans
     viz         Interactive plot, coverage map, or GIFs for one plan
     export      Convert a plan CSV to the telescope's .obsplan format
 """
@@ -146,6 +147,7 @@ def write_report(out, summary, fields, replay=None):
         f"| Revisit pairs under 30 minutes | {int(summary['short_pairs'].sum())} |",
         f"| Unused hours | {summary['unused_minutes'].sum() / 60:.2f} |",
         f"| Unique fields visited | {int((fields['visits'] > 0).sum()):,} of {len(fields):,} |",
+        f"| Fields seen in g, i, and z | {int((fields['dither_phases'] == 2).sum()):,} |",
         f"| DB histories matching plans | {int(fields['history_matches'].sum()):,} of {len(fields):,} |",
     ]
     if replay:
@@ -160,7 +162,16 @@ def cmd_analyze(args):
     from ls4.metrics import analyze_survey
 
     analyze_survey(plan_paths(args.plans, args.limit), args.output_dir, grid_csv=args.grid,
-                   db_path=args.db, sample_minutes=args.visibility_sample_minutes, show=args.show)
+                   db_path=args.db, sample_minutes=args.visibility_sample_minutes, show=args.show,
+                   band_nside=args.band_nside)
+
+
+def cmd_bands(args):
+    from ls4.bands import write_band_report
+    from ls4.metrics import load_plans
+
+    write_band_report(load_plans(plan_paths(args.plans, args.limit)), args.output_dir,
+                      nside=args.nside, show=args.show)
 
 
 def cmd_viz(args):
@@ -238,8 +249,18 @@ def build_parser():
     p.add_argument("--grid", type=Path, default=GRID_CSV, help="Grid CSV (includes unvisited fields)")
     p.add_argument("--db", type=Path, help="Verify every field's history in this database against the plans")
     p.add_argument("--visibility-sample-minutes", type=int, default=10)
+    p.add_argument("--band-nside", type=int, default=128,
+                   help="HEALPix nside for the per-band maps in bands/ (0 skips them)")
     p.add_argument("--show", action="store_true", help="Also open the Plotly figures")
     p.set_defaults(func=cmd_analyze)
+
+    p = sub.add_parser("bands", help="Sky coverage and cadence in g, i, and z")
+    p.add_argument("plans", nargs="*", type=Path, help="Plan CSVs (default: plans/*.csv)")
+    p.add_argument("--limit", type=int, help="Only the first N plans after sorting by name")
+    p.add_argument("--output-dir", type=Path, default=OUTPUTS_DIR / "bands")
+    p.add_argument("--nside", type=int, default=128, help="HEALPix resolution (128 is ~0.46° pixels)")
+    p.add_argument("--show", action="store_true", help="Also open the Plotly figures")
+    p.set_defaults(func=cmd_bands)
 
     p = sub.add_parser("viz", help="Visualize one plan (interactive plot by default)")
     p.add_argument("plan", type=Path)

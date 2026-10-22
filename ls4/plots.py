@@ -344,6 +344,44 @@ def cadence_cdf(cadence, output_dir, show=False):
     _finish(fig, Path(output_dir) / "cadence_gaps_cdf.html", show)
 
 
+BAND_COLORS = {"g": "#1baf7a", "i": "#2a78d6", "z": "#eb6834"}
+
+
+def band_cadence_cdf(nightly, output_dir, show=False):
+    """Per-band CDF of gaps between nights on which a sky pixel was observed."""
+    fig = go.Figure()
+    for band, color in BAND_COLORS.items():
+        gaps = nightly.loc[nightly["band"] == band, "gap_days"].dropna().to_numpy()
+        if not len(gaps):
+            continue
+        # Plot quantiles rather than every pixel's gap to keep the file small.
+        percent = np.linspace(0, 100, 501)
+        fig.add_trace(go.Scatter(
+            x=np.percentile(gaps, percent), y=percent, mode="lines", name=f"{band} (median {np.median(gaps):.2f} d)",
+            line=dict(color=color, width=2),
+            hovertemplate=f"{band}: %{{y:.1f}}% of gaps ≤ %{{x:.2f}} d<extra></extra>"))
+    fig.update_layout(title="Cadence by band: gaps between nights a sky pixel was observed",
+                      xaxis_title="Gap (days)", yaxis_title="% of gaps ≤ x", xaxis_type="log",
+                      hovermode="x unified", legend=dict(x=0.99, xanchor="right", y=0.02, yanchor="bottom"),
+                      height=550)
+    _finish(fig, Path(output_dir) / "band_cadence_cdf.html", show)
+
+
+def band_area_growth(area, output_dir, show=False):
+    """Cumulative sky area observed in each band and in all three."""
+    fig = go.Figure()
+    for band, color in BAND_COLORS.items():
+        fig.add_trace(go.Scatter(x=area["night"], y=area[f"{band}_cumulative_deg2"], name=band,
+                                 mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=8),
+                                 hovertemplate=f"{band}: %{{y:,.0f}} deg²<extra></extra>"))
+    fig.add_trace(go.Scatter(x=area["night"], y=area["all_bands_cumulative_deg2"], name="g, i and z",
+                             mode="lines", line=dict(color="#52514e", width=2, dash="dash"),
+                             hovertemplate="g, i and z: %{y:,.0f} deg²<extra></extra>"))
+    fig.update_layout(title="Cumulative sky area by band", xaxis_title="Night",
+                      yaxis_title="Area (deg²)", hovermode="x unified", height=550)
+    _finish(fig, Path(output_dir) / "band_area_growth.html", show)
+
+
 def nightly_summary(nightly, output_dir, show=False):
     """Images taken and time efficiency for each night."""
     nightly = nightly.sort_values("night").copy()

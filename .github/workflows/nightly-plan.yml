@@ -1,0 +1,94 @@
+name: Nightly observing plan
+
+on:
+  schedule:
+    - cron: '17 16 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Local evening YYYY-MM-DD (blank = tonight)'
+        type: string
+        required: false
+      publish:
+        description: 'Publish an operational revision and notify Slack (default branch only)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Serialize publication and manual backfills. Never cancel a publishing run.
+concurrency:
+  group: ls4-nightly-production
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      EVENING_DATE: ${{ inputs.date }}
+      LS4_PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify publication branch
+        run: |
+          if [[ "$LS4_PUBLISH" == true && "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo 'Operational publication must run from the default branch.' >&2
+            exit 1
+          fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-nightly.lock
+      - name: Install pinned dependencies
+        run: python -m pip install --require-hashes -r requirements-nightly.lock
+      - name: Generate and validate plan, weather report, and GIF
+        run: python -m ls4.nightly generate --date "$EVENING_DATE" --github-history
+      - name: Publish permanent nightly revision
+        if: env.LS4_PUBLISH == 'true'
+        run: python -m ls4.nightly publish
+      - name: Preserve outputs and failure manifest
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: nightly-package
+          path: outputs/nightly/
+          retention-days: 30
+          if-no-files-found: warn
+
+  notify:
+    needs: nightly
+    # A publish attempt from a non-default branch fails verification; keep it out of Slack.
+    if: always() && (github.event_name == 'schedule' || (inputs.publish && github.ref_name == github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Retrieve available outputs
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: nightly-package
+          path: outputs/nightly/
+      # Standard-library-only entry point; works even if science installation failed.
+      - name: Send Slack status and GIF
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID || 'C0CB1J9LZPF' }}
+          LS4_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NIGHTLY_STATUS: ${{ needs.nightly.result }}
+          EVENING_DATE: ${{ inputs.date }}
+        run: python3 -m ls4.nightly notify --date "$EVENING_DATE" --job-status "$NIGHTLY_STATUS"

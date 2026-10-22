@@ -24,12 +24,18 @@ Without installing, run the same commands from the repository root as `python -m
 | `ls4 export plans/X.csv` | Convert a plan to the telescope `.obsplan` format |
 | `ls4 viz plans/X.csv` | Interactive plot; add `--gif`, `--visits-gif`, `--coverage`, or `--html` |
 | `ls4 analyze [plans...]` | Per-field visits, cadence, nightly summary, and sky maps (default: all of `plans/`) |
+| `ls4 bands [plans...]` | Sky coverage and cadence in g, i, and z (also written by `analyze` to `bands/`) |
 | `ls4 simulate` | Schedule many nights on a fresh database (`--start`, `--nights`), or `--replay plans/` to re-plan saved nights and compare |
 | `ls4 build-grid` | Rebuild the grid CSV and database (`--force` required if the database exists) |
 
 Every command has `--help`.
 
 ### Nightly workflow
+
+For the scheduled production pipeline, Slack notifications, nightly GIFs, and
+La Silla weather reports, see [nightly operations](docs/nightly-operations.md).
+The GitHub workflow runs daily at 16:17 UTC once activated on the default branch.
+Cadence history currently assumes that generated plans were executed.
 
 ```bash
 ls4 plan                                  # writes plans/<tonight>.csv
@@ -69,6 +75,33 @@ For each block the scheduler:
 Plans are validated (exactly one initial and one dither per field, at least 30 minutes
 apart, no overlapping rows, all slews feasible) before they are saved.
 
+## Dithers and bands
+
+The camera's 2×2 quadrants carry i on one diagonal, z top right, and g bottom left. Each pair
+is an initial pointing plus a dither half a grid step west in RA, so every point covered
+by the pair gets i plus g or z (the bottom row of quadrants gives g and i, the top row gives i and z).
+The pair alternates nightly between two dither phases (`dither_phase`): phase 1 shifts both
+pointings half a grid step north in Dec, which swaps g and z. Over two consecutive nights
+every part of a field gets i on both nights and g and z once each, matching SOLE's nominal
+cadence. Each night uses a single phase so neighboring fields complete each other's coverage;
+plans record it in `configuration`. `ls4 analyze` counts fields observed in both phases
+(g, i, and z).
+
+### Per-band coverage and cadence
+
+`ls4 bands` (and `ls4 analyze`, into `<output>/bands/`) projects each exposure's four
+quadrants onto HEALPix pixels (`--nside`, default 128, ~0.46° pixels) and writes:
+
+- `band_sky_map.html`: interactive map with band (g, i, z, or all three), metric (nights
+  observed, median gap, days since last), and a through-night slider. URL parameters
+  pick the view, e.g. `band_sky_map.html?band=all&metric=gap&night=10`.
+- `band_cadence_cdf.html`: gaps between nights a pixel was observed, per band.
+- `band_area_growth.html`: cumulative area per band and in all three bands.
+- `band_pixels.csv`, `band_nightly_area.csv`, `band_summary.txt`.
+
+The figure's left/right orientation on the sky is assumed (`QUADRANT_BANDS` in
+`ls4/config.py`); a camera flipped in RA mirrors the per-band maps.
+
 ## Survey programs
 
 Each field's `program_id` comes from its Galactic coordinates (`ls4.grid.program_ids`,
@@ -89,6 +122,8 @@ database is read, so databases built with an older footprint need no rebuild.
 
 `target, start time (UTC), end time (UTC), duration (minutes), ra, dec, configuration,
 start_time_mjd, block_number, ra_hr`. Dithered visits are named `<field>_dither`.
+`configuration` holds `{'dither': bool, 'phase': 0 or 1}`; the `ra`/`dec` columns are the
+actual pointings, which are offset from the grid center for dithers and phase 1.
 Rows named `Unused Time` (or `TransitionBlock` in older plans) are gaps, not pointings.
 
 ## Survey analysis outputs
@@ -109,6 +144,7 @@ ls4/
   metrics.py    Per-night metrics and multi-night survey statistics
   plots.py      Plotly figures
   animate.py    Sky-rotation GIFs
+  bands.py      Per-band (g/i/z) coverage, cadence, and the band sky map
   sky_maps.py   Standalone HTML sky maps
   export.py     .obsplan writer
   cli.py        The `ls4` command

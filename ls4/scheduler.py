@@ -10,9 +10,9 @@ from astropy.coordinates import NonRotationTransformationWarning, SkyCoord
 from astropy.time import Time
 
 from ls4.config import (GRID_DB, LS4, NON_SCIENCE_TARGETS, SOLE, default_block_duration, exp,
-                        global_constraints, half_field_offset_ra, max_cluster_radius, read_out,
-                        slew_rate, sole_cadence, sole_fraction)
-from ls4.grid import load_schedulable, record_pairs
+                        global_constraints, max_cluster_radius, read_out, slew_rate, sole_cadence,
+                        sole_fraction)
+from ls4.grid import grid_steps, load_schedulable, record_pairs
 
 warnings.filterwarnings("ignore", category=NonRotationTransformationWarning)
 
@@ -46,12 +46,21 @@ def visibility_at_slots(coords, starts, exposure_duration):
     return allowed[:, 0::2] & allowed[:, 1::2]
 
 
-def dither_coords(ra_deg, dec_deg):
-    return SkyCoord((np.asarray(ra_deg) - half_field_offset_ra.to_value(u.deg)) * u.deg,
-                    np.asarray(dec_deg) * u.deg)
+def dither_phase(night_start):
+    """0 or 1, alternating by night; phase 1 shifts the pair half a grid step in Dec."""
+    return int(np.floor(night_start.mjd - 0.5)) % 2
 
 
-def _row(target, start, end, ra=None, dec=None, dither=None, block_number=0):
+def pair_coords(ra_deg, dec_deg, phase=0):
+    """Initial and dithered pointings of grid fields for a dither phase (see config)."""
+    ra_step, dec_step = grid_steps(ra_deg, dec_deg)
+    dec = np.asarray(dec_deg, dtype=float) + phase * dec_step / 2
+    initial = SkyCoord(np.asarray(ra_deg, dtype=float) * u.deg, dec * u.deg)
+    dither = SkyCoord((np.asarray(ra_deg, dtype=float) - ra_step / 2) * u.deg, dec * u.deg)
+    return initial, dither
+
+
+def _row(target, start, end, ra=None, dec=None, dither=None, block_number=0, phase=0):
     return {
         "target": target,
         "start time (UTC)": start.to_datetime().isoformat(sep=" "),
@@ -59,21 +68,21 @@ def _row(target, start, end, ra=None, dec=None, dither=None, block_number=0):
         "duration (minutes)": (end - start).to_value(u.minute),
         "ra": ra,
         "dec": dec,
-        "configuration": str({"dither": dither}) if dither is not None else "",
+        "configuration": str({"dither": dither, "phase": phase}) if dither is not None else "",
         "start_time_mjd": start.mjd,
         "block_number": block_number,
         "ra_hr": ra / 15 if ra is not None else None,
     }
 
 
-def _block_rows(observations, block_start, block_end, block_number):
+def _block_rows(observations, block_start, block_end, block_number, phase):
     """Emit science pointings and the actual gaps between them."""
     rows = []
     cursor = block_start
     for target, start, end, ra, dec, dither in sorted(observations, key=lambda item: item[1].mjd):
         if (start - cursor).to_value(u.second) > 1e-3:
             rows.append(_row("Unused Time", cursor, start, block_number=block_number))
-        rows.append(_row(target, start, end, ra, dec, dither, block_number))
+        rows.append(_row(target, start, end, ra, dec, dither, block_number, phase))
         cursor = end
     if (block_end - cursor).to_value(u.second) > 1e-3:
         rows.append(_row("Unused Time", cursor, block_end, block_number=block_number))
@@ -130,10 +139,9 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     names = grid["Field Name"].to_numpy()
     programs = grid["program_id"].to_numpy()
     last_scheduled = grid["last_scheduled_mjd"].fillna(0).to_numpy(dtype=float)
-    coords = SkyCoord(grid["ra_deg"].to_numpy() * u.deg,
-                      grid["dec_deg"].to_numpy() * u.deg)
+    phase = dither_phase(night_start)
+    coords, dithers = pair_coords(grid["ra_deg"].to_numpy(), grid["dec_deg"].to_numpy(), phase)
     unit_vectors = coords.cartesian.xyz.value.T
-    dithers = dither_coords(grid["ra_deg"].to_numpy(), grid["dec_deg"].to_numpy())
     used = np.zeros(len(grid), dtype=bool)
     rows = []
     current_time = night_start
@@ -247,8 +255,8 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
 
         first_end = current_time + block_duration
         second_end = first_end + block_duration
-        rows.extend(_block_rows(first_observations, current_time, first_end, block_number))
-        rows.extend(_block_rows(second_observations, first_end, second_end, block_number + 1))
+        rows.extend(_block_rows(first_observations, current_time, first_end, block_number, phase))
+        rows.extend(_block_rows(second_observations, first_end, second_end, block_number + 1, phase))
         if last_choice is not None:
             previous_coord = dithers[last_choice]
             previous_end = last_second_end
@@ -272,5 +280,5 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     record_pairs(pairs["last_mjd"], db_path)
     assert len(pairs) == completed, "Only complete pairs should be recorded"
     print(f"Wrote {output_path}: {2 * completed} images in {completed} complete pairs "
-          f"({sole_pairs} SOLE, budget {sole_budget})")
+          f"({sole_pairs} SOLE, budget {sole_budget}; dither phase {phase})")
     return obs_plan

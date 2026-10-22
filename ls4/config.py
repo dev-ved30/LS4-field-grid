@@ -9,7 +9,7 @@ from pathlib import Path
 from astroplan import Observer
 from astroplan.constraints import AirmassConstraint, AtNightConstraint, MoonSeparationConstraint
 from astropy import units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.utils import iers
 from regions import RectangleSkyRegion
 
@@ -17,7 +17,10 @@ from regions import RectangleSkyRegion
 iers.conf.auto_download = False
 iers.conf.auto_max_age = None
 
-LS4 = Observer.at_site("La Silla Observatory")
+# Same coordinates as Astropy's La Silla registry entry, fixed here so a clean
+# production runner does not need a site-registry download just to import LS4.
+LS4 = Observer(name="La Silla Observatory", location=EarthLocation.from_geodetic(
+    lon=-70.73 * u.deg, lat=-29.256666666666668 * u.deg, height=2347 * u.m))
 
 # Telescope specs
 slew_rate = 0.8 * u.deg / u.second  # Assumed telescope slew rate; replace with a measured value when available.
@@ -47,8 +50,15 @@ global_constraints = [AirmassConstraint(max=max_airmass),
                       AtNightConstraint.twilight_civil(),
                       MoonSeparationConstraint(min=15 * u.deg)]
 
-half_field_offset_ra = FOV_length / 2
-half_field_offset_dec = FOV_width / 2
+# Focal-plane bands in 2x2 quadrants: i on one diagonal, z top right, g bottom left.
+# Keys are (RA side, Dec side), +1 toward increasing RA / Dec. The figure's left/right
+# orientation on the sky is assumed; the alternation below works either way, but
+# per-band maps (ls4.bands) mirror if the camera is flipped in RA.
+BANDS = ("g", "i", "z")
+QUADRANT_BANDS = {(-1, 1): "i", (1, 1): "z", (-1, -1): "g", (1, -1): "i"}
+# An initial pointing plus a dither half a grid step in RA gives every point i and one of
+# g or z. Shifting the pair half a grid step in Dec on alternate nights (dither phase 1)
+# swaps g and z, so every part of a field gets i nightly and g and z every other night.
 
 region = RectangleSkyRegion(SkyCoord(0 * u.deg, 0 * u.deg), FOV_length, FOV_width, angle=90 * u.deg)
 

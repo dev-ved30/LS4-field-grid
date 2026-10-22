@@ -194,7 +194,10 @@ def draw_galactic_plane(draw: ImageDraw.ImageDraw, center_ra: float, width: int,
     x, y = project(gc_ra, gc_dec, center_ra, width, height)
     radius = 5
     draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=line_color)
-    draw.text((x + 10, y - 10), "Galactic center", fill=line_color, font=label_font)
+    label = "Galactic center"
+    label_width = draw.textlength(label, font=label_font)
+    label_x = x + 10 if x + 10 + label_width <= width - 8 else x - 10 - label_width
+    draw.text((max(8, label_x), y - 10), label, fill=line_color, font=label_font)
 
 
 def load_font(size: int) -> ImageFont.ImageFont:
@@ -324,7 +327,12 @@ def make_frame(grid: list[tuple[float, float]], observed: list[Pointing], timest
         caption = "cyan: first pointing   magenta: dithered revisit   yellow: La Silla zenith"
         if show_galaxy:
             caption += "   purple: galactic plane (+-10 deg)"
-        draw.text((MARGIN, height - 28), caption, fill="#d4dce3", font=label_font)
+        caption_font = label_font
+        size = 21
+        while draw.textlength(caption, font=caption_font) > width - 2 * MARGIN and size > 10:
+            size -= 1
+            caption_font = load_font(size)
+        draw.text((MARGIN, height - 28), caption, fill="#d4dce3", font=caption_font)
         draw.text((width - 465, 14), f"La Silla LST {center_ra / 15:04.1f} h", fill="#d4dce3", font=lst_font)
     return image
 

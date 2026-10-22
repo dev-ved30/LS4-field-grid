@@ -46,6 +46,20 @@ def build_grid():
     return df[keep].reset_index(drop=True)
 
 
+def grid_steps(ra_deg, dec_deg, grid_csv=GRID_CSV):
+    """Per-field RA spacing within its declination ring, and the ring spacing (degrees)."""
+    grid = pd.read_csv(grid_csv, usecols=["ra_deg", "dec_deg"])
+    # Match rings on rounded Dec; older databases differ from the CSV in the last digits.
+    rings = grid.groupby(grid["dec_deg"].round(6))["ra_deg"]
+    # Kept fields are every other tile, so the median gap skips the short wrap-around gap.
+    ra_steps = rings.agg(lambda ra: np.median(np.diff(np.sort(ra))) if len(ra) > 1 else 360.0)
+    dec_step = np.median(np.diff(np.sort(grid["dec_deg"].unique())))
+    ra_step = pd.Series(np.asarray(dec_deg, dtype=float)).round(6).map(ra_steps)
+    if ra_step.isna().any():
+        raise ValueError("Field declinations do not match a grid ring")
+    return ra_step.to_numpy(), dec_step
+
+
 def write_db(grid, db_path=GRID_DB, overwrite=False):
     """Store the grid in the `grid` table used by the scheduler."""
     db_path = Path(db_path)

@@ -12,7 +12,7 @@ from astropy.time import Time
 from ls4.config import (FOV_length, FOV_width, GRID_CSV, SOLE, default_block_duration, exp,
                         min_declination, read_out, slew_rate)
 from ls4.grid import load_grid_csv, load_history, program_ids
-from ls4.scheduler import complete_pairs, dither_coords, science_pointings, visibility_at_slots
+from ls4.scheduler import complete_pairs, pair_coords, science_pointings, visibility_at_slots
 
 
 # ---- single night ---------------------------------------------------------
@@ -106,6 +106,8 @@ def load_plans(paths):
         frames.append(df)
     plans = science_pointings(pd.concat(frames, ignore_index=True)).dropna(subset=["ra", "dec"])
     plans["utc"] = pd.to_datetime(plans["start time (UTC)"])
+    # Plans made before the alternating dither have no phase; they are all phase 0.
+    plans["phase"] = plans["configuration"].astype(str).str.contains("'phase': 1").astype(int)
     return plans.sort_values("utc").reset_index(drop=True)
 
 
@@ -136,8 +138,7 @@ def sampled_visibility(grid, plan_paths, sample_minutes):
     positions = np.flatnonzero(eligible)
     ra = grid.iloc[positions]["ra"].to_numpy()
     dec = grid.iloc[positions]["dec"].to_numpy()
-    initial = SkyCoord(ra * u.deg, dec * u.deg)
-    dither = dither_coords(ra, dec)
+    initial, dither = pair_coords(ra, dec)
     duration = exp + read_out
     step = sample_minutes * u.minute
     for path in plan_paths:
@@ -172,7 +173,7 @@ def nightly_summary(plan_paths):
 
 
 def analyze_survey(plan_paths, output_dir, grid_csv=GRID_CSV, db_path=None,
-                   sample_minutes=10, show=False):
+                   sample_minutes=10, show=False, band_nside=128):
     """Write per-field, cadence, and nightly statistics plus figures for a set of plans."""
     from ls4 import plots
     from ls4.sky_maps import write_sky_grid_maps
@@ -196,13 +197,14 @@ def analyze_survey(plan_paths, output_dir, grid_csv=GRID_CSV, db_path=None,
         first_obs=("utc", "min"),
         last_obs=("utc", "max"),
         last_plan_mjd=("start_time_mjd", "max"),
+        dither_phases=("phase", "nunique"),
     ).reset_index()
     unknown = per_field.loc[~per_field["base_field"].isin(grid["base_field"]), "base_field"]
     if len(unknown):
         raise ValueError(f"Plans contain fields absent from grid: {unknown.tolist()[:10]}")
     per_field = grid[["base_field", "program_id", "ra", "dec"]].merge(
         per_field, on="base_field", how="left", validate="one_to_one")
-    for column in ("visits", "dithers", "observed_nights"):
+    for column in ("visits", "dithers", "observed_nights", "dither_phases"):
         per_field[column] = per_field[column].fillna(0).astype(int)
     per_field["complete_pairs"] = per_field["base_field"].map(pair_counts).fillna(0).astype(int)
     per_field["above_declination_limit"], per_field["sampled_visible_nights"] = (
@@ -251,6 +253,8 @@ def analyze_survey(plan_paths, output_dir, grid_csv=GRID_CSV, db_path=None,
         f"  no sampled pair opportunity: "
         f'{len(never) - len(visible_never) - (~never["above_declination_limit"]).sum()}',
         f'mean visits/field    : {observed["visits"].mean():.2f}',
+        f'fields in g, i and z : {(observed["dither_phases"] == 2).sum()} of {len(observed)} visited '
+        f'(both dither phases)',
     ]
     if len(cadence):
         sole_gaps = cadence.loc[cadence["base_field"].isin(
@@ -286,6 +290,10 @@ def analyze_survey(plan_paths, output_dir, grid_csv=GRID_CSV, db_path=None,
         plots.cadence_histograms(cadence, per_field_cadence, output_dir, show)
         plots.cadence_cdf(cadence, output_dir, show)
     plots.nightly_summary(nightly, output_dir, show)
+
+    if band_nside:
+        from ls4.bands import write_band_report
+        write_band_report(plans, output_dir / "bands", nside=band_nside, show=show)
 
     table_path = output_dir / "per_field_stats.csv"
     per_field.merge(per_field_cadence, on="base_field", how="left").to_csv(table_path, index=False)

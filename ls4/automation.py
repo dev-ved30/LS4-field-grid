@@ -334,6 +334,9 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
             # Backticks would close the code block early.
             text += "\n```" + slack_escape(str(manifest["error"])[:500]).replace("`", "'") + "```"
         blocks.append(section(text))
+    obsplan = obsplan_link(publication) if published else None
+    if obsplan:
+        blocks.append(section(f"*<{obsplan[1]}|Download {obsplan[0]}>*"))
     if valid and published and job_status != "success":
         blocks.append(section(":rotating_light: The plan is published, but another workflow step "
                               "failed; inspect the run logs."))
@@ -345,9 +348,6 @@ def slack_blocks(manifest, publication=None, *, job_status="success", run_url=""
     if manifest.get("warnings"):
         blocks.append(section(":warning: *Needs attention*\n"
                               + "\n".join("• " + slack_escape(w) for w in manifest["warnings"])))
-    obsplan = obsplan_link(publication) if published else None
-    if obsplan:
-        blocks.append(section(f"*<{obsplan[1]}|Download {obsplan[0]}>*"))
     blocks.append({"type": "divider"})
     blocks.extend(footer_links([(publication.get("url"), "Nightly package & weather report"),
                                 (run_url, "Run logs")]))

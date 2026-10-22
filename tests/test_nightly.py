@@ -264,7 +264,7 @@ def test_slack_blocks_layout():
     assert blocks[0]["type"] == "header" and "2026-10-21" in blocks[0]["text"]["text"]
     assert ":warning: *Partial Success*" in rendered and ":partly_sunny: *Max cloud*" in rendered
     assert "IERS &lt;stale&gt; &amp; old" in rendered
-    assert "<https://github.com/x/20261022.obsplan|Download 20261022.obsplan>" in rendered
+    assert blocks[2]["text"]["text"] == "*<https://github.com/x/20261022.obsplan|Download 20261022.obsplan>*"
     footer = blocks[-1]["elements"]
     assert len(footer) == 1 and "Run logs" in footer[0]["text"]
     assert "validated <@U0888078546>" in rendered  # partial success tags the operator

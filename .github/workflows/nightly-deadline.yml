@@ -21,5 +21,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ vars.SLACK_CHANNEL_ID || 'C0CB1J9LZPF' }}
+          SLACK_ALERT_USER: ${{ vars.SLACK_ALERT_USER || 'U07RY6EBXHD' }}
           LS4_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 -m ls4.nightly check

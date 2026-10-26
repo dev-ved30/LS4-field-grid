@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LS4 observing plans</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="viz-root">
+<form class="gate" id="gate" hidden>
+  <img class="logo" src="logo.png" alt="LS4 logo" width="88" height="88">
+  <h1>LS4 observing plans</h1>
+  <p>Enter the password to view the plans.</p>
+  <input type="password" id="password" autocomplete="current-password" aria-label="Password" placeholder="Password" required>
+  <label class="check"><input type="checkbox" id="remember"> Remember on this device</label>
+  <button type="submit" class="primary" id="unlock">Unlock</button>
+  <p class="error" id="gate-error" role="alert"></p>
+</form>
+<main id="app" hidden>
+  <header class="masthead">
+    <img class="logo" src="logo.png" alt="LS4 logo" width="52" height="52">
+    <div class="brand">
+      <h1>LS4 observing plans</h1>
+      <p>La Silla Schmidt Southern Survey</p>
+    </div>
+    <nav class="tabs" id="view" aria-label="View"></nav>
+  </header>
+
+  <div class="toolbar" aria-label="Plan selection">
+    <div class="seg" id="collection" aria-label="Plans"></div>
+    <div class="picker">
+      <button type="button" class="step" id="prev" aria-label="Previous night">&#8249;</button>
+      <select id="night" aria-label="Night"></select>
+      <button type="button" class="step" id="next" aria-label="Next night">&#8250;</button>
+      <button type="button" class="plain" id="tonight">Tonight</button>
+    </div>
+    <span class="badge" id="status"></span>
+    <div class="downloads" id="links"></div>
+  </div>
+
+  <section id="night-view" aria-label="Night plan">
+    <div class="stats" id="tiles"></div>
+    <p class="meta" id="meta"></p>
+    <div class="card">
+      <div class="card-head">
+        <div class="seg small" id="color" aria-label="Color by"></div>
+        <label class="check"><input type="checkbox" id="underlay" checked> Earlier nights</label>
+        <div class="clock">
+          <button type="button" class="plain small" id="play">Play</button>
+          <input id="clock" type="range" min="0" step="1" aria-label="Time of night">
+          <output id="clock-label"></output>
+        </div>
+      </div>
+      <div class="chart"><canvas id="night-map" role="img" aria-label="Sky map of the night's pointings"></canvas>
+        <div class="tooltip" id="night-tooltip"></div></div>
+      <div class="legend" id="night-legend"></div>
+    </div>
+    <details id="pointings">
+      <summary>Pointings</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>Start (UTC)</th><th>Chile</th><th>Field</th><th>Visit</th>
+          <th>Block</th><th>RA</th><th>Dec</th><th>Program</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </details>
+  </section>
+
+  <section id="survey-view" aria-label="Coverage and cadence" hidden>
+    <div class="card">
+      <div class="card-head">
+        <div class="seg small" id="band" aria-label="Band"></div>
+        <div class="seg small" id="metric" aria-label="Metric"></div>
+        <div class="clock">
+          <span class="label">Through</span>
+          <input id="through" type="range" min="0" step="1" aria-label="Through night">
+          <output id="through-label"></output>
+        </div>
+      </div>
+      <div class="chart"><canvas id="survey-map" role="img" aria-label="Sky map of coverage and cadence"></canvas>
+        <div class="tooltip" id="survey-tooltip"></div></div>
+      <div class="legend" id="survey-legend"></div>
+    </div>
+    <div class="detail" id="pixel-detail" hidden></div>
+    <div class="charts">
+      <figure><figcaption>Area observed (deg², cumulative)</figcaption><div class="plot" id="area-chart"></div></figure>
+      <figure><figcaption>Exposures per night</figcaption><div class="plot" id="exposure-chart"></div></figure>
+      <figure><figcaption>Gaps between observed nights</figcaption><div class="plot" id="gap-chart"></div></figure>
+    </div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

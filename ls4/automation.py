@@ -73,20 +73,19 @@ class GitHub:
         if not re.fullmatch(r"[\w.-]+/[\w.-]+", repository):
             raise ValueError("Expected an owner/repository")
         self.base = f"https://api.github.com/repos/{repository}"
-        self.headers = {"Authorization": f"Bearer {token}",
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28"}
+        self.headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+        if token:  # Public repositories can be read anonymously (at a lower rate limit).
+            self.headers["Authorization"] = f"Bearer {token}"
 
     def api(self, path, *, method="GET", payload=None):
         return request_json(self.base + path, method=method, payload=payload, headers=self.headers)
 
-    def latest_nightly(self, evening, *, before=True):
-        """Find the newest revision of the most recent applicable evening.
+    def nightly_revisions(self):
+        """Every published nightly revision as `((stamp, published, run, attempt), release)`.
 
         Scan every page: creation order differs from night order after backfills.
         Drafts are incomplete packages and must never become cadence history.
         """
-        cutoff = evening.strftime("%Y%m%d")
         candidates = []
         for page in range(1, 101):
             releases = self.api(f"/releases?per_page=100&page={page}")
@@ -95,14 +94,27 @@ class GitHub:
                 if not match or release["draft"]:
                     continue
                 stamp, run, attempt = match.groups()
-                if ((stamp < cutoff) if before else (stamp == cutoff)):
-                    # A rerun of an older run ID can be published after a newer
-                    # run. Publication time determines the current revision.
-                    published = release.get("published_at") or release.get("created_at") or ""
-                    candidates.append(((stamp, published, int(run), int(attempt)), release))
+                # A rerun of an older run ID can be published after a newer
+                # run. Publication time determines the current revision.
+                published = release.get("published_at") or release.get("created_at") or ""
+                candidates.append(((stamp, published, int(run), int(attempt)), release))
             if len(releases) < 100:
-                return max(candidates, key=lambda item: item[0])[1] if candidates else None
+                return candidates
         raise RuntimeError("Release listing exceeded 10,000 entries; archive or revise history lookup")
+
+    def latest_nightly(self, evening, *, before=True):
+        """Find the newest revision of the most recent applicable evening."""
+        cutoff = evening.strftime("%Y%m%d")
+        candidates = [item for item in self.nightly_revisions()
+                      if ((item[0][0] < cutoff) if before else (item[0][0] == cutoff))]
+        return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+    def nightly_releases(self):
+        """The newest revision of every published night, keyed by YYYYMMDD."""
+        newest = {}
+        for key, release in sorted(self.nightly_revisions(), key=lambda item: item[0]):
+            newest[key[0]] = release
+        return newest
 
     def read_asset(self, release, name):
         asset = next((a for a in release["assets"] if a["name"] == name), None)

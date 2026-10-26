@@ -261,8 +261,9 @@ function drawNight() {
     }
     m.galactic();
     const t = clockMjd(), sky = skyAt(N, t);
-    c.lineWidth = 1.2; c.setLineDash([5, 4]); c.strokeStyle = css('--text-secondary');
+    c.lineWidth = 1.5; c.setLineDash([1.5, 3.5]); c.strokeStyle = css('--text-secondary');
     c.beginPath(); m.path(circle(sky.lst, INDEX.site.lat, INDEX.airmassRadius), true); c.stroke();
+    c.lineWidth = 1.2; c.setLineDash([5, 4]);
     c.strokeStyle = css('--muted');
     c.beginPath(); m.path(circle(sky.moonRa, sky.moonDec, INDEX.moonSeparation), true); c.stroke();
     c.setLineDash([]);
@@ -306,69 +307,69 @@ function updateClock() {
   drawNight();
 }
 
-function tile(label, value, sub) {
-  return el('div', {class: 'tile'}, el('div', {class: 'label'}, label), el('div', {class: 'value'}, value),
+function stat(label, value, sub) {
+  return el('div', {class: 'stat'}, el('div', {class: 'label'}, label), el('div', {class: 'value'}, value),
             sub ? el('div', {class: 'sub'}, sub) : null);
+}
+
+// Night status and downloads live in the toolbar; the badge also shows in the coverage view.
+function renderStatus() {
+  const info = current(), release = state.night && state.night.night === info.night ? state.night.release : null;
+  const badge = $('status');
+  if (info.published || release) {
+    const warn = release && (release.warnings || []).length;
+    badge.replaceChildren(el('span', {class: 'dot', style: `background:var(--${warn ? 'warn' : 'good'})`}),
+                          warn ? 'Published · needs attention' : 'Published');
+  } else {
+    badge.replaceChildren(state.collection.key === 'production' ? 'Saved plan' : 'Forecast');
+  }
+  badge.title = state.collection.description;
 }
 
 function renderNightInfo() {
   const N = state.night, M = N.metrics, [start, end] = N.window;
-  const hours = (end - start) * 24;
-  const tiles = [
-    tile('Observing window (Chile)', `${hhmm(start, CHILE)}–${hhmm(end, CHILE)}`,
-         `${hhmm(start)}–${hhmm(end)} UTC · ${num(hours, 1)} h between astronomical twilights`),
-    tile('Exposures', num(M.images), `${num(M.complete_pairs)} initial + dither pairs · ${num(M.sole_pairs)} SOLE`),
-    tile('Area tonight', `${num(N.area.any)} deg²`, `g ${num(N.area.g)} · i ${num(N.area.i)} · z ${num(N.area.z)} deg²`),
-    tile('Dither phase', N.phase === null ? '—' : String(N.phase),
-         N.phase === null ? 'Plan predates the alternating dither' : 'Alternates nightly, swapping g and z'),
-    tile('Unused time', `${num(M.unused_minutes)} min`, `Median slew ${num(M.median_slew_deg, 1)}°, max ${num(M.max_slew_deg, 1)}°`),
-    tile('Moon', `${num(N.moonIllumination * 100)}%`, `illuminated; pointings stay ≥ ${num(INDEX.moonSeparation)}° away`),
+  const stats = [
+    stat('Night (Chile)', `${hhmm(start, CHILE)}–${hhmm(end, CHILE)}`,
+         `${hhmm(start)}–${hhmm(end)} UTC · ${num((end - start) * 24, 1)} h`),
+    stat('Exposures', num(M.images), `${num(M.complete_pairs)} pairs`),
+    stat('Area', `${num(N.area.any)} deg²`, `g ${num(N.area.g)} · i ${num(N.area.i)} · z ${num(N.area.z)}`),
+    stat('Moon', `${num(N.moonIllumination * 100)}%`, 'illuminated'),
   ];
   const w = N.release && N.release.weather;
   if (w) {
-    tiles.push(tile('Weather forecast', `${num(w.cloud_cover_max_percent)}% cloud`,
-      `max; rain chance ${num(w.precipitation_probability_max_percent)}% · humidity ${num(w.humidity_max_percent)}% · ` +
-      `${num(w.temperature_min_c, 1)} to ${num(w.temperature_max_c, 1)} °C`));
+    stats.push(stat('Cloud (forecast max)', `${num(w.cloud_cover_max_percent)}%`,
+      `rain ${num(w.precipitation_probability_max_percent)}% · ${num(w.temperature_min_c)}–${num(w.temperature_max_c)} °C`));
   }
-  $('tiles').replaceChildren(...tiles);
+  $('tiles').replaceChildren(...stats);
+
+  const meta = [
+    N.phase === null ? 'Fixed dither (predates the nightly g/z swap)' : `Dither phase ${N.phase}`,
+    `${num(M.sole_pairs)} SOLE pairs`, `${num(M.unused_minutes)} min unused`,
+    `median slew ${num(M.median_slew_deg, 1)}°`,
+  ];
+  $('meta').replaceChildren(meta.join(' · '),
+    ...((N.release && N.release.warnings) || []).map(w => el('span', {class: 'warn'}, ` · ${w}`)));
 
   const links = $('links');
-  links.replaceChildren();
-  if (N.release) {
-    const warnings = N.release.warnings || [];
-    links.append(el('span', {class: 'status'},
-      el('span', {class: 'dot', style: `background:var(--${warnings.length ? 'warn' : 'good'})`}),
-      warnings.length ? 'Published with warnings' : 'Published'));
-    links.append(el('a', {href: N.release.url}, `Release ${N.release.tag}`));
-  } else if (state.collection.key === 'production') {
-    links.append(el('span', {class: 'status'}, 'Saved plan from the repository (plans/)'));
-  } else {
-    links.append(el('span', {class: 'status'}, 'Forecast; not an operational plan'));
-  }
-  links.append(el('a', {href: N.files.csv, download: ''}, 'Plan CSV'));
-  links.append(el('a', {href: N.files.obsplan, download: ''}, `Telescope file (${N.files.obsplan.split('/').pop()})`));
-  if (N.release && N.release.gif) links.append(el('a', {href: N.release.gif}, 'Night GIF'));
-  if (N.release && (N.release.warnings || []).length) {
-    links.append(el('ul', {class: 'warnings'}, ...N.release.warnings.map(w => el('li', {}, w))));
-  }
+  links.replaceChildren(el('a', {href: N.files.csv, download: ''}, 'CSV'),
+    el('a', {href: N.files.obsplan, download: '', title: N.files.obsplan.split('/').pop()}, '.obsplan'));
+  if (N.release && N.release.gif) links.append(el('a', {href: N.release.gif}, 'GIF'));
+  if (N.release) links.append(el('a', {href: N.release.url, title: N.release.tag}, 'Release'));
+  renderStatus();
 
-  const legend = $('night-legend');
   const item = (...children) => el('span', {class: 'item'}, ...children);
-  const items = [];
-  if (state.color === 'bands') {
-    items.push(...INDEX.bands.map(b => item(swatch(b), `${b} quadrant`)));
-  } else {
-    items.push(item(`${hhmm(N.span[0])} UTC`),
-      el('span', {class: 'ramp', style: `background:linear-gradient(to right, ${stopsOf('--time').join(',')})`}),
-      item(`${hhmm(N.span[1])} UTC`));
-  }
-  items.push(item(el('span', {class: 'line-key'}), 'First pointing'),
-    item(el('span', {class: 'line-key dashed'}), 'Dithered revisit'),
-    item(el('span', {class: 'swatch', style: 'background:var(--prior)'}), 'Observed on earlier nights'),
-    item(el('span', {class: 'line-key dashed'}), `Airmass ${INDEX.maxAirmass} limit (around the zenith +)`),
-    item(el('span', {class: 'swatch', style: 'background:var(--muted);border-radius:50%'}), `Moon, ${num(INDEX.moonSeparation)}° exclusion`),
+  const items = state.color === 'bands'
+    ? INDEX.bands.map(b => item(swatch(b), b))
+    : [item(hhmm(N.span[0])),
+       el('span', {class: 'ramp', style: `background:linear-gradient(to right, ${stopsOf('--time').join(',')})`}),
+       item(`${hhmm(N.span[1])} UTC`)];
+  items.push(item(el('span', {class: 'line-key'}), 'first pointing'),
+    item(el('span', {class: 'line-key dashed'}), 'dithered revisit'),
+    item(el('span', {class: 'swatch', style: 'background:var(--prior)'}), 'earlier nights'),
+    item(el('span', {class: 'line-key dotted'}), `airmass ${INDEX.maxAirmass}`),
+    item(el('span', {class: 'swatch', style: 'background:var(--muted);border-radius:50%'}), 'Moon'),
     item(el('span', {class: 'line-key', style: 'border-color:var(--plane)'}), 'Galactic plane'));
-  legend.replaceChildren(...items);
+  $('night-legend').replaceChildren(...items);
 
   const summary = $('pointings').querySelector('summary');
   summary.textContent = `Pointings (${num(N.pointings.length)})`;
@@ -544,7 +545,7 @@ function renderSurveyLegend() {
     item(allNights ? 'of g, i, z seen' : state.band === 'all' ? `${M.unit} (slowest band)` : M.unit),
     item(el('span', {class: 'swatch', style: 'background:var(--empty)'}), M.empty),
     item(el('span', {class: 'line-key', style: 'border-color:var(--plane)'}), 'Galactic plane'),
-    ...(state.metric === 'gap' ? [item('Scale tops out at the 99th percentile.')] : []));
+    item(state.pixel === null ? 'Click the map for a cell\'s history' : 'Click outside the coverage to clear'));
 }
 
 function findPixel(event) {
@@ -566,7 +567,7 @@ function bandSummary(p, band) {
   const list = bandNights(p, band), gap = list.length > 1 ? median(gapsOf(list)) : null;
   const since = list.length ? state.survey.nights[state.nightIdx].mjd - state.survey.nights[list[list.length - 1]].mjd : null;
   return `${list.length} night${list.length === 1 ? '' : 's'}` + (gap === null ? '' : ` · median gap ${num(gap, 1)} d`) +
-    (since === null ? '' : ` · last ${num(since, 1)} d before`);
+    (since === null ? '' : ` · last ${num(since, 1)} d ago`);
 }
 
 function surveyTooltip(event) {
@@ -583,10 +584,8 @@ function surveyTooltip(event) {
 
 function renderPixelDetail() {
   const box = $('pixel-detail'), S = state.survey;
-  if (!S || state.pixel === null) {
-    box.replaceChildren('Click a part of the sky to see when it was observed in each band.');
-    return;
-  }
+  box.hidden = !S || state.pixel === null;
+  if (box.hidden) return;
   const p = S.pixels[state.pixel], first = S.nights[0].mjd, last = S.nights[S.nights.length - 1].mjd;
   const through = S.nights[state.nightIdx].mjd;
   const rows = INDEX.bands.map(band => {
@@ -604,8 +603,8 @@ function renderPixelDetail() {
               el('span', {}, bandSummary(p, band)));
   });
   const label = k => dayLabel(stampIso(S.nights[k].label), {});
-  box.replaceChildren(el('h2', {}, `RA ${raHours(p[0])}, Dec ${num(p[1], 1)}° · nights observed, ` +
-    `${label(0)} to ${label(S.nights.length - 1)} (dashed: selected night; faded: later nights)`), ...rows);
+  box.replaceChildren(el('h2', {}, `RA ${raHours(p[0])}, Dec ${num(p[1], 1)}° `,
+    el('span', {}, `· nights observed ${label(0)} to ${label(S.nights.length - 1)}; dashed line is the selected night`)), ...rows);
 }
 
 // ---- small charts --------------------------------------------------------------------
@@ -770,12 +769,23 @@ function renderCharts() {
   });
 }
 
+function renderFooter() {
+  const commit = INDEX.commit ? INDEX.commit.slice(0, 7) : null;
+  $('footer').replaceChildren(
+    el('p', {}, `${state.collection.label}: ${state.collection.description}`),
+    el('p', {}, INDEX.historyNote),
+    el('p', {}, `Generated ${INDEX.generatedUtc.replace('T', ' ').replace('+00:00', ' UTC')}`,
+      commit ? ' from ' : '', commit ? el('a', {href: `https://github.com/${INDEX.repository}/commit/${INDEX.commit}`}, commit) : '',
+      ' · ', el('a', {href: `https://github.com/${INDEX.repository}`}, 'Source and documentation')));
+}
+
 // ---- wiring ------------------------------------------------------------------------
 
 let nightMap, surveyMap, syncColor, syncBand, syncMetric, syncView, syncCollection;
 
 function setView(view) {
   state.view = view;
+  root.dataset.view = view;
   $('night-view').hidden = view !== 'night';
   $('survey-view').hidden = view !== 'survey';
   syncView();
@@ -797,8 +807,9 @@ function selectNight(k) {
   $('next').disabled = state.nightIdx === nights().length - 1;
   $('through').value = state.nightIdx;
   const info = current();
-  $('through-label').value = `${dayLabel(info.date)} (night ${state.nightIdx + 1} of ${nights().length})`;
+  $('through-label').value = `${dayLabel(info.date)} · night ${state.nightIdx + 1} of ${nights().length}`;
   writeHash();
+  renderStatus();
   if (state.view === 'night') showNight();
   else { drawSurvey(); renderPixelDetail(); renderCharts(); }
 }
@@ -806,10 +817,10 @@ function selectNight(k) {
 async function selectCollection(key, nightStamp) {
   state.collection = INDEX.collections.find(c => c.key === key) || INDEX.collections[0];
   syncCollection();
-  $('collection-note').textContent = state.collection.description;
+  renderFooter();
   const stamp = tonightStamp();
   $('night').replaceChildren(...nights().map((n, k) => el('option', {value: String(k)},
-    `${dayLabel(n.date)}${n.night === stamp ? ' (tonight)' : ''} · ${num(n.images)} exposures`)));
+    `${dayLabel(n.date)}${n.night === stamp ? ' · tonight' : ''}`)));
   $('through').max = nights().length - 1;
   state.survey = null; state.pixel = null; state.night = null;
   const k = nights().findIndex(n => n.night === nightStamp);
@@ -831,6 +842,7 @@ async function selectCollection(key, nightStamp) {
 function readHash() {
   const hash = new URLSearchParams(location.hash.slice(1));
   state.view = hash.get('v') === 'survey' ? 'survey' : 'night';
+  root.dataset.view = state.view;
   state.color = hash.get('color') === 'bands' ? 'bands' : 'time';
   if (['g', 'i', 'z', 'all'].includes(hash.get('band'))) state.band = hash.get('band');
   if (METRICS[hash.get('metric')]) state.metric = hash.get('metric');
@@ -905,10 +917,6 @@ async function main() {
     drawNight(); drawSurvey(); renderCharts();
   });
 
-  const commit = INDEX.commit ? INDEX.commit.slice(0, 7) : null;
-  $('footer').replaceChildren(`${INDEX.historyNote} Generated ${INDEX.generatedUtc.replace('T', ' ').replace('+00:00', ' UTC')}`,
-    commit ? ' from ' : '', commit ? el('a', {href: `https://github.com/${INDEX.repository}/commit/${INDEX.commit}`}, commit) : '',
-    '. ', el('a', {href: `https://github.com/${INDEX.repository}`}, 'Source and documentation'), '.');
 
   window.addEventListener('hashchange', applyHash);
   await applyHash();

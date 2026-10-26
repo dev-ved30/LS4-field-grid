@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LS4 observing plans</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <header>
+    <h1>LS4 observing plans</h1>
+    <p id="collection-note" class="note"></p>
+  </header>
+
+  <nav class="controls" aria-label="Plan selection">
+    <div class="group"><span>Plans</span><div class="seg" id="collection"></div></div>
+    <div class="group"><span>Night</span>
+      <button type="button" class="step" id="prev" aria-label="Previous night">&#8249;</button>
+      <select id="night" aria-label="Night"></select>
+      <button type="button" class="step" id="next" aria-label="Next night">&#8250;</button>
+      <button type="button" class="plain" id="tonight">Tonight</button>
+    </div>
+    <div class="group"><span>View</span><div class="seg" id="view"></div></div>
+  </nav>
+
+  <section id="night-view" aria-label="Night plan">
+    <div class="tiles" id="tiles"></div>
+    <div class="links" id="links"></div>
+    <div class="controls">
+      <div class="group"><span>Color</span><div class="seg" id="color"></div></div>
+      <label class="check"><input type="checkbox" id="underlay" checked> Earlier coverage</label>
+      <div class="group grow">
+        <button type="button" class="plain" id="play">Play</button>
+        <input id="clock" type="range" min="0" step="1" aria-label="Time of night">
+        <output id="clock-label"></output>
+      </div>
+    </div>
+    <div class="chart"><canvas id="night-map" role="img" aria-label="Sky map of the night's pointings"></canvas>
+      <div class="tooltip" id="night-tooltip"></div></div>
+    <div class="legend" id="night-legend"></div>
+    <details id="pointings">
+      <summary>Pointings</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>Start (UTC)</th><th>Chile</th><th>Field</th><th>Visit</th>
+          <th>Block</th><th>RA</th><th>Dec</th><th>Program</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </details>
+  </section>
+
+  <section id="survey-view" aria-label="Coverage and cadence" hidden>
+    <p class="note">Each cell is a HEALPix pixel colored by the selected band and metric, using the
+      camera's g/i/z quadrants for every exposure through the selected night. Click a cell for its
+      observing history. With g + i + z, "nights observed" counts bands seen and the cadence metrics
+      use the slowest band.</p>
+    <div class="controls">
+      <div class="group"><span>Band</span><div class="seg" id="band"></div></div>
+      <div class="group"><span>Metric</span><div class="seg" id="metric"></div></div>
+      <div class="group grow"><span>Through</span>
+        <input id="through" type="range" min="0" step="1" aria-label="Through night">
+        <output id="through-label"></output></div>
+    </div>
+    <div class="chart"><canvas id="survey-map" role="img" aria-label="Sky map of coverage and cadence"></canvas>
+      <div class="tooltip" id="survey-tooltip"></div></div>
+    <div class="legend" id="survey-legend"></div>
+    <div class="detail" id="pixel-detail"></div>
+    <div class="charts">
+      <figure><figcaption>Area observed, cumulative (deg²)</figcaption><div class="plot" id="area-chart"></div></figure>
+      <figure><figcaption>Exposures per night <span class="hint">click a bar to open the night</span></figcaption>
+        <div class="plot" id="exposure-chart"></div></figure>
+      <figure><figcaption>Gap between observed nights, per pixel</figcaption><div class="plot" id="gap-chart"></div></figure>
+    </div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

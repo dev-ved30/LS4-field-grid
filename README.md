@@ -27,6 +27,7 @@ Without installing, run the same commands from the repository root as `python -m
 | `ls4 bands [plans...]` | Sky coverage and cadence in g, i, and z (also written by `analyze` to `bands/`) |
 | `ls4 simulate` | Schedule many nights on a fresh database (`--start`, `--nights`), or `--replay plans/` to re-plan saved nights and compare |
 | `ls4 build-grid` | Rebuild the grid CSV and database (`--force` required if the database exists) |
+| `ls4 site` | Build the observing-plan website in `outputs/site/` (`--releases` adds published nights, `--serve` previews it) |
 
 Every command has `--help`.
 
@@ -58,6 +59,32 @@ Each run writes to `outputs/<name>/`: one CSV per night, an isolated `grid.db`,
 `summary.csv`, `REPORT.md`, `stats/`, and optional `gifs/`. The project
 database and saved plans are never modified. A replay also records the saved plan's
 metrics (`baseline_*` columns) next to the new ones.
+
+### Observing-plan website
+
+The website shows each night's plan and the survey's per-band coverage and cadence.
+GitHub Actions rebuilds it on GitHub Pages after every nightly run (see
+[nightly operations](docs/nightly-operations.md#website)). It has two views:
+
+- **Night plan:** a dropdown of nights, defaulting to tonight. The sky map shows
+  footprints colored by time or by g/i/z quadrant, with dithered revisits dashed. It also
+  shows the airmass limit around the zenith, the Moon and its exclusion zone, and the
+  sky observed on earlier nights. A time slider (with play) steps through the night. The
+  page lists the night's metrics, the weather forecast and release for published nights,
+  a table of pointings, and links to the plan CSV and `.obsplan`.
+- **Coverage & cadence:** the band sky map from `ls4 bands` (nights observed, median
+  gap, and days since last, per band) through the selected night. Click a pixel to see
+  the nights it was observed in each band. The view also has charts of cumulative area,
+  exposures per night, and the distribution of gaps between observations.
+
+Plans are grouped into **Production** (top-level `plans/*.csv`, plus the newest
+revision of each published nightly release) and one collection per `plans/forecast_*/`
+directory. Links such as `#c=production&n=20261026&v=survey&band=all&metric=gap`
+open a specific view.
+
+```bash
+ls4 site --releases --serve   # build outputs/site/ and preview it at http://127.0.0.1:8000/
+```
 
 ## How the scheduler works
 
@@ -147,6 +174,7 @@ ls4/
   bands.py      Per-band (g/i/z) coverage, cadence, and the band sky map
   sky_maps.py   Standalone HTML sky maps
   export.py     .obsplan writer
+  website.py    Observing-plan website data (`ls4 site`); the page itself is in web/
   cli.py        The `ls4` command
 assets/         Field-grid CSV (the .db is local and gitignored)
 plans/          Real nightly plans; plans/archive/ holds older ones

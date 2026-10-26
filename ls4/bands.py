@@ -117,10 +117,8 @@ def write_band_report(plans, output_dir, nside=128, show=False):
     return stats, area
 
 
-def write_band_sky_map(nightly, night_order, plans, nside, output):
-    """Self-contained HTML map with band, metric, and through-night controls."""
-    from ls4.sky_maps import galactic_lines
-
+def band_map_data(nightly, night_order, plans, nside):
+    """Per observed pixel: center RA/Dec and, per band, indices of the nights it was observed."""
     index = {night: i for i, night in enumerate(night_order)}
     night_mjd = plans.groupby("night")["start_time_mjd"].min().reindex(night_order)
     observed = {}
@@ -129,15 +127,21 @@ def write_band_sky_map(nightly, night_order, plans, nside, output):
             index[night] for night in group["night"])
     pixels = np.array(sorted(observed))
     theta, phi = hp.pix2ang(nside, pixels)
-    data = {
+    return {
         "bands": list(BANDS),
         "nights": [{"label": night, "mjd": round(float(mjd), 4)} for night, mjd in night_mjd.items()],
         "pixelDeg": float(np.degrees(hp.nside2resol(nside))),
         "pixels": [[round(float(np.degrees(p)), 3), round(float(90 - np.degrees(t)), 3),
                     *[observed[pixel][band] for band in BANDS]]
                    for pixel, t, p in zip(pixels, theta, phi)],
-        "galactic": galactic_lines(),
     }
+
+
+def write_band_sky_map(nightly, night_order, plans, nside, output):
+    """Self-contained HTML map with band, metric, and through-night controls."""
+    from ls4.sky_maps import galactic_lines
+
+    data = {**band_map_data(nightly, night_order, plans, nside), "galactic": galactic_lines()}
     output = Path(output)
     output.write_text(BAND_MAP_HTML.replace("__DATA__", json.dumps(data, separators=(",", ":"))))
     print(f"  wrote {output}")

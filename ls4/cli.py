@@ -8,9 +8,11 @@ Commands:
     bands       Sky coverage and cadence in g, i, and z for a set of plans
     viz         Interactive plot, coverage map, or GIFs for one plan
     export      Convert a plan CSV to the telescope's .obsplan format
+    site        Build (and optionally serve) the observing-plan website
 """
 
 import argparse
+import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -205,6 +207,15 @@ def cmd_export(args):
     write_obsplan(args.plan, args.output or f"{stamp}.obsplan")
 
 
+def cmd_site(args):
+    from ls4.website import build_site, serve
+
+    out = build_site(args.output, plans_dir=args.plans_dir, releases=args.releases,
+                     repository=args.repository, token=os.environ.get("GITHUB_TOKEN"), nside=args.nside)
+    if args.serve:
+        serve(out, args.port)
+
+
 # ---- parser ------------------------------------------------------------------
 
 def build_parser():
@@ -282,6 +293,18 @@ def build_parser():
     p.add_argument("-d", "--date", help="YYYYMMDD for the file name (default: tomorrow, UTC)")
     p.add_argument("--output", type=Path, help="Output path (default: <date>.obsplan)")
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("site", help="Build the observing-plan website (plans, coverage, cadence)")
+    p.add_argument("--output", type=Path, default=OUTPUTS_DIR / "site")
+    p.add_argument("--plans-dir", type=Path, default=PLANS_DIR,
+                   help="Production plans/*.csv and forecast_*/ directories")
+    p.add_argument("--releases", action="store_true",
+                   help="Add published nightly releases (uses GITHUB_TOKEN if set)")
+    p.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "dev-ved30/LS4-field-grid"))
+    p.add_argument("--nside", type=int, default=64, help="HEALPix resolution of coverage maps (64 is ~0.92°)")
+    p.add_argument("--serve", action="store_true", help="Serve the site locally after building it")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=cmd_site)
     return parser
 
 

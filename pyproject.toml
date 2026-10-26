@@ -27,3 +27,6 @@ ls4 = "ls4.cli:main"
 
 [tool.setuptools]
 packages = ["ls4"]
+
+[tool.setuptools.package-data]
+ls4 = ["web/*"]

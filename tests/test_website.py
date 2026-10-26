@@ -50,6 +50,34 @@ def test_site_is_consistent(tmp_path, plans_dir):
     assert (out / night["files"]["csv"]).read_bytes() == (plans_dir / "20260717.csv").read_bytes()
 
 
+def test_password_protected_site_has_no_plaintext(tmp_path, plans_dir):
+    import base64
+    import gzip
+
+    from cryptography.exceptions import InvalidTag
+
+    from ls4.website import Sealer
+
+    out = build_site(tmp_path / "site", plans_dir=plans_dir, nside=32, password="correct horse")
+    assert not [p for p in (out / "data").rglob("*") if p.is_file() and p.suffix != ".enc"]
+    assert not [p for p in (out / "files").rglob("*") if p.is_file() and p.suffix != ".enc"]
+    auth = json.loads((out / "auth.json").read_text())
+
+    def unseal(raw, password):
+        aead = Sealer(password, "dev-ved30/LS4-field-grid").aead
+        assert base64.b64decode(auth["salt"]) == Sealer(password, "dev-ved30/LS4-field-grid").salt
+        return gzip.decompress(aead.decrypt(raw[:12], raw[12:], None))
+
+    assert unseal(base64.b64decode(auth["check"]), "correct horse") == b"LS4"
+    index = json.loads(unseal((out / "data" / "index.json.enc").read_bytes(), "correct horse"))
+    assert [c["key"] for c in index["collections"]] == ["production", "forecast_20260718"]
+    with pytest.raises(InvalidTag):
+        unseal(base64.b64decode(auth["check"]), "wrong")
+    # A rebuild reuses the key (fixed salt), so remembered sign-ins survive nightly updates.
+    again = build_site(tmp_path / "site", plans_dir=plans_dir, nside=32, password="correct horse")
+    assert json.loads((again / "auth.json").read_text())["salt"] == auth["salt"]
+
+
 def test_site_refuses_to_replace_other_directories(tmp_path, plans_dir):
     other = tmp_path / "notes"
     other.mkdir()

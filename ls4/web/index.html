@@ -9,7 +9,16 @@
 </head>
 <body>
 <div class="viz-root">
-<main>
+<form class="gate" id="gate" hidden>
+  <img class="logo" src="logo.png" alt="LS4 logo" width="88" height="88">
+  <h1>LS4 observing plans</h1>
+  <p>Enter the password to view the plans.</p>
+  <input type="password" id="password" autocomplete="current-password" aria-label="Password" placeholder="Password" required>
+  <label class="check"><input type="checkbox" id="remember"> Remember on this device</label>
+  <button type="submit" class="primary" id="unlock">Unlock</button>
+  <p class="error" id="gate-error" role="alert"></p>
+</form>
+<main id="app" hidden>
   <header class="masthead">
     <img class="logo" src="logo.png" alt="LS4 logo" width="52" height="52">
     <div class="brand">

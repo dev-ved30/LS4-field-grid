@@ -86,6 +86,11 @@ open a specific view.
 ls4 site --releases --serve   # build outputs/site/ and preview it at http://127.0.0.1:8000/
 ```
 
+The site is password protected when `LS4_SITE_PASSWORD` is set: data files and downloads
+are encrypted (AES-256-GCM, PBKDF2 key) and decrypted in the browser after sign-in, since
+GitHub Pages cannot restrict access itself. Without the variable, local builds are
+unprotected; the Pages workflow refuses to build without it.
+
 ## How the scheduler works
 
 The night is split into pairs of 30-minute blocks: the first block takes initial

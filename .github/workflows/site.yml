@@ -39,10 +39,12 @@ jobs:
           cache-dependency-path: requirements-nightly.lock
       - name: Install pinned dependencies
         run: python -m pip install --require-hashes -r requirements-nightly.lock
-      - name: Build site from saved plans and published nightly releases
+      - name: Build the password-protected site from saved plans and published nightly releases
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python -m ls4 site --releases --output outputs/site
+          LS4_SITE_PASSWORD: ${{ secrets.LS4_SITE_PASSWORD }}
+        # Refuses to build (and so to deploy) if the password secret is missing.
+        run: python -m ls4 site --releases --require-password --output outputs/site
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: outputs/site

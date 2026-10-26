@@ -39,15 +39,95 @@ function svg(tag, attrs = {}, text) {
 }
 const swatch = name => el('span', {class: 'swatch', style: `background:var(--${name})`});
 
+// ---- data access and password protection ----------------------------------------------
+// A password-protected build (ls4/website.py `Sealer`) stores every data file and download as
+// `<name>.enc`: a 12-byte IV, then AES-256-GCM over gzipped bytes, under a PBKDF2-SHA256 key.
+
+let KEY = null;  // AES key once unlocked; null for an unprotected build
+const KEY_STORE = 'ls4-site-key';
+const b64bytes = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
+
+async function fetchBytes(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.arrayBuffer();
+}
+async function openSealed(buffer, key = KEY) {
+  const bytes = new Uint8Array(buffer);
+  const zipped = await crypto.subtle.decrypt({name: 'AES-GCM', iv: bytes.slice(0, 12)}, key, bytes.slice(12));
+  return new Response(new Blob([zipped]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+}
+// Raw bytes of a site file, decrypted when the site is protected.
+async function fileBytes(path) {
+  return KEY ? openSealed(await fetchBytes(`${path}.enc`)) : fetchBytes(path);
+}
+
 const cache = new Map();
 function load(path) {
   if (!cache.has(path)) {
-    cache.set(path, fetch(path).then(r => {
-      if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-      return r.json();
-    }));
+    cache.set(path, fileBytes(path).then(bytes => JSON.parse(new TextDecoder().decode(bytes))));
   }
   return cache.get(path);
+}
+
+// Download a plan file; protected files are decrypted in the browser first.
+function downloadLink(path, label, title) {
+  const name = path.split('/').pop();
+  const a = el('a', {href: path, download: name, title: title || name}, label);
+  a.addEventListener('click', async event => {
+    if (!KEY) return;
+    event.preventDefault();
+    const url = URL.createObjectURL(new Blob([await fileBytes(path)], {type: 'text/plain'}));
+    const temp = el('a', {href: url, download: name});
+    document.body.append(temp); temp.click(); temp.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  return a;
+}
+
+// Ask for the password if this build is protected; resolves once the data can be read.
+async function unlock() {
+  const response = await fetch('auth.json', {cache: 'no-store'});
+  if (!response.ok) return;  // unprotected build
+  const auth = await response.json();
+  const check = b64bytes(auth.check);
+  const works = async key => {
+    try { return new TextDecoder().decode(await openSealed(check, key)) === 'LS4'; } catch { return false; }
+  };
+  // A remembered key (not the password) is reused until the password changes.
+  const stored = sessionStorage.getItem(KEY_STORE) || localStorage.getItem(KEY_STORE);
+  if (stored) {
+    const key = await crypto.subtle.importKey('raw', b64bytes(stored), 'AES-GCM', true, ['decrypt']);
+    if (await works(key)) { KEY = key; return; }
+    sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE);
+  }
+  const gate = $('gate');
+  gate.hidden = false;
+  $('password').focus();
+  await new Promise(resolve => gate.addEventListener('submit', async event => {
+    event.preventDefault();
+    $('unlock').disabled = true; $('gate-error').textContent = '';
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode($('password').value), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey(
+      {name: 'PBKDF2', hash: 'SHA-256', salt: b64bytes(auth.salt), iterations: auth.iterations},
+      base, {name: 'AES-GCM', length: 256}, true, ['decrypt']);
+    $('unlock').disabled = false;
+    if (!(await works(key))) {
+      $('gate-error').textContent = 'Incorrect password.';
+      $('password').select();
+      return;
+    }
+    const raw = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey('raw', key))));
+    ($('remember').checked ? localStorage : sessionStorage).setItem(KEY_STORE, raw);
+    KEY = key;
+    gate.hidden = true;
+    resolve();
+  }));
+}
+
+function signOut() {
+  sessionStorage.removeItem(KEY_STORE); localStorage.removeItem(KEY_STORE);
+  location.reload();
 }
 
 // ---- sky geometry -------------------------------------------------------------
@@ -351,8 +431,7 @@ function renderNightInfo() {
     ...((N.release && N.release.warnings) || []).map(w => el('span', {class: 'warn'}, ` · ${w}`)));
 
   const links = $('links');
-  links.replaceChildren(el('a', {href: N.files.csv, download: ''}, 'CSV'),
-    el('a', {href: N.files.obsplan, download: '', title: N.files.obsplan.split('/').pop()}, '.obsplan'));
+  links.replaceChildren(downloadLink(N.files.csv, 'CSV'), downloadLink(N.files.obsplan, '.obsplan'));
   if (N.release && N.release.gif) links.append(el('a', {href: N.release.gif}, 'GIF'));
   if (N.release) links.append(el('a', {href: N.release.url, title: N.release.tag}, 'Release'));
   renderStatus();
@@ -776,7 +855,9 @@ function renderFooter() {
     el('p', {}, INDEX.historyNote),
     el('p', {}, `Generated ${INDEX.generatedUtc.replace('T', ' ').replace('+00:00', ' UTC')}`,
       commit ? ' from ' : '', commit ? el('a', {href: `https://github.com/${INDEX.repository}/commit/${INDEX.commit}`}, commit) : '',
-      ' · ', el('a', {href: `https://github.com/${INDEX.repository}`}, 'Source and documentation')));
+      ' · ', el('a', {href: `https://github.com/${INDEX.repository}`}, 'Source and documentation'),
+      ...(KEY ? [' · ', (() => { const a = el('a', {href: '#'}, 'Sign out');
+        a.addEventListener('click', event => { event.preventDefault(); signOut(); }); return a; })()] : [])));
 }
 
 // ---- wiring ------------------------------------------------------------------------
@@ -867,6 +948,8 @@ async function applyHash() {
 }
 
 async function main() {
+  await unlock();
+  $('app').hidden = false;
   INDEX = await load('data/index.json');
   readHash();
 
@@ -923,6 +1006,7 @@ async function main() {
 }
 
 main().catch(error => {
-  document.querySelector('main').append(el('p', {class: 'note'}, `Could not load the site data: ${error.message}`));
+  $('app').hidden = false;
+  $('app').append(el('p', {class: 'note'}, `Could not load the site data: ${error.message}`));
   throw error;
 });

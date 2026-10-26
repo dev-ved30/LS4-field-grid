@@ -10,10 +10,18 @@ per `plans/forecast_*/` directory. For each collection it writes
 
 plus `data/index.json` and the page itself (`ls4/web/`). Serve the directory over HTTP
 (`ls4 site --serve`); browsers do not let a page opened from disk read its JSON files.
+
+With a password (environment variable `LS4_SITE_PASSWORD`), every data file and download
+is gzipped and encrypted with AES-256-GCM under a PBKDF2-derived key, written as `<name>.enc`,
+and the page asks for the password before decrypting in the browser. GitHub Pages has no
+server-side access control, so this is what keeps the site's contents private; anything
+also published in the repository or its releases stays public there.
 """
 
+import base64
 import contextlib
 from datetime import datetime, timedelta, timezone
+import gzip
 import hashlib
 import io
 import json
@@ -31,6 +39,8 @@ from ls4.config import (BANDS, FOV_length, FOV_width, LS4, PLANS_DIR, QUADRANT_B
 
 WEB = Path(__file__).resolve().parent / "web"
 REPOSITORY = "dev-ved30/LS4-field-grid"
+PASSWORD_ENV = "LS4_SITE_PASSWORD"
+KDF_ITERATIONS = 600_000
 HISTORY_NOTE = ("Cadence and coverage assume every plan was executed as scheduled; "
                 "weather losses and deviations are not reconciled.")
 
@@ -260,15 +270,52 @@ def prepare_output(out):
     """Rebuild into a fresh directory, refusing to delete anything that is not a previous site."""
     out = Path(out)
     if out.exists():
-        if any(out.iterdir()) and not (out / "data" / "index.json").exists():
+        previous = (out / "data" / "index.json").exists() or (out / "auth.json").exists()
+        if any(out.iterdir()) and not previous:
             raise SystemExit(f"{out} exists and is not an LS4 site; choose another --output.")
         shutil.rmtree(out)
     out.mkdir(parents=True)
     return out
 
 
+class Sealer:
+    """Encrypt site files for the browser (see app.js `unlock`): AES-256-GCM over gzipped bytes.
+
+    The salt is fixed per repository so the key, and a visitor's remembered sign-in,
+    survive nightly rebuilds; it changes only when the password does.
+    """
+
+    def __init__(self, password, repository):
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+        if not password:
+            raise ValueError("The site password is empty")
+        self.salt = hashlib.sha256(f"LS4 observing-plan site {repository}".encode()).digest()[:16]
+        key = PBKDF2HMAC(hashes.SHA256(), 32, self.salt, KDF_ITERATIONS).derive(password.encode())
+        self.aead = AESGCM(key)
+
+    def seal(self, data):
+        iv = os.urandom(12)
+        return iv + self.aead.encrypt(iv, gzip.compress(data, mtime=0), None)
+
+    def seal_tree(self, out):
+        """Replace every data file and download with its encrypted `.enc` counterpart."""
+        for directory in ("data", "files"):
+            for path in sorted((out / directory).rglob("*")):
+                if path.is_file():
+                    path.with_name(path.name + ".enc").write_bytes(self.seal(path.read_bytes()))
+                    path.unlink()
+        b64 = lambda raw: base64.b64encode(raw).decode()
+        (out / "auth.json").write_text(json.dumps({
+            "kdf": "PBKDF2-SHA256", "iterations": KDF_ITERATIONS, "salt": b64(self.salt),
+            "check": b64(self.seal(b"LS4")),
+        }))
+
+
 def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSITORY,
-               token=None, nside=64):
+               token=None, nside=64, password=None):
     from astroplan.constraints import MoonSeparationConstraint
 
     out = prepare_output(output)
@@ -304,6 +351,11 @@ def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSI
         if asset.is_file():
             shutil.copyfile(asset, out / asset.name)
     (out / ".nojekyll").touch()
+    if password:
+        Sealer(password, repository).seal_tree(out)
+        print("Encrypted the site's data and downloads; visitors need the password.")
+    else:
+        print(f"WARNING: no {PASSWORD_ENV}; the site is not password protected.")
     print(f"Wrote site to {out}")
     return out
 

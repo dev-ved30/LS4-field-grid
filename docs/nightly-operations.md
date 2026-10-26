@@ -128,10 +128,23 @@ on demand. It reads repository plans and the newest revision of every published
 release (`ls4 site --releases`). A failed site build never affects the nightly plan
 or its Slack notification.
 
-To activate it, open **GitHub → Settings → Pages** and set **Source** to **GitHub
-Actions**, then run the workflow once manually. The site's address is
-`https://<owner>.github.io/<repository>/`. Pages sites are public, as is this
-repository, so plans, `.obsplan` files, and weather summaries become publicly viewable.
+To activate it:
+
+1. In **GitHub → Settings → Secrets and variables → Actions**, add the site password as
+   repository secret **LS4_SITE_PASSWORD**. Enter it directly in GitHub, never in chat or a
+   tracked file. The workflow refuses to build without it.
+2. Open **GitHub → Settings → Pages** and set **Source** to **GitHub Actions**.
+3. Run the workflow once manually.
+
+The site's address is `https://<owner>.github.io/<repository>/`. Its data and downloads are
+encrypted with the password and decrypted in the visitor's browser; the page itself, the
+logo, and a small key-check file are public. Visitors can tick "Remember on this device";
+changing the secret signs everyone out at the next rebuild.
+
+The password protects only the website. This repository is public, so its `plans/`
+directory and the nightly releases (CSV, `.obsplan`, GIF, weather) remain public on GitHub.
+To keep those private too, make the repository private (Pages from a private repository
+needs a paid plan) or publish releases elsewhere.
 
 ## Local generation and dependency updates
 

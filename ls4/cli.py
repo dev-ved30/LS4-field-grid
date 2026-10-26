@@ -210,8 +210,14 @@ def cmd_export(args):
 def cmd_site(args):
     from ls4.website import build_site, serve
 
+    from ls4.website import PASSWORD_ENV
+
+    password = os.environ.get(PASSWORD_ENV)
+    if args.require_password and not password:
+        raise SystemExit(f"{PASSWORD_ENV} is not set; refusing to build an unprotected site.")
     out = build_site(args.output, plans_dir=args.plans_dir, releases=args.releases,
-                     repository=args.repository, token=os.environ.get("GITHUB_TOKEN"), nside=args.nside)
+                     repository=args.repository, token=os.environ.get("GITHUB_TOKEN"), nside=args.nside,
+                     password=password)
     if args.serve:
         serve(out, args.port)
 
@@ -302,6 +308,8 @@ def build_parser():
                    help="Add published nightly releases (uses GITHUB_TOKEN if set)")
     p.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY", "dev-ved30/LS4-field-grid"))
     p.add_argument("--nside", type=int, default=64, help="HEALPix resolution of coverage maps (64 is ~0.92°)")
+    p.add_argument("--require-password", action="store_true",
+                   help="Fail unless LS4_SITE_PASSWORD is set (the site is encrypted when it is)")
     p.add_argument("--serve", action="store_true", help="Serve the site locally after building it")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(func=cmd_site)

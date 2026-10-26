@@ -76,7 +76,7 @@ function circle(ra, dec, radius, n = 120) {
   return points;
 }
 
-// Plate carrée map, east (increasing RA) to the left as on the sky.
+// Plate carrée map with RA increasing to the right, matching the camera diagram and QUADRANT_BANDS.
 class SkyMap {
   constructor(canvas, draw) {
     this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.draw = draw;
@@ -98,10 +98,10 @@ class SkyMap {
     this.draw();
   }
   get ready() { return this.width > 0; }
-  x(ra) { return this.m.left + (180 - wrap180(ra - this.center)) * this.scale; }
+  x(ra) { return this.m.left + (180 + wrap180(ra - this.center)) * this.scale; }
   y(dec) { return this.m.top + (this.dec[1] - dec) * this.scale; }
   toSky(px, py) {
-    return [((this.center + 180 - (px - this.m.left) / this.scale) % 360 + 360) % 360,
+    return [((this.center - 180 + (px - this.m.left) / this.scale) % 360 + 360) % 360,
             this.dec[1] - (py - this.m.top) / this.scale];
   }
   // Add a polygon or polyline to the current path, unwrapped in RA so it crosses the map edge cleanly.
@@ -112,7 +112,7 @@ class SkyMap {
     for (const shift of [0, 360, -360]) {
       if (lo + shift >= 180 || hi + shift <= -180) continue;
       points.forEach((p, k) => {
-        const X = this.m.left + (180 - d[k] - shift) * this.scale, Y = this.y(p[1]);
+        const X = this.m.left + (180 + d[k] + shift) * this.scale, Y = this.y(p[1]);
         if (k) ctx.lineTo(X, Y); else ctx.moveTo(X, Y);
       });
       if (closed) ctx.closePath();
@@ -152,7 +152,7 @@ class SkyMap {
       const X = this.x(h * 15);
       if (X > left + 8 && X < left + W - 8) c.fillText(`${h}h`, X, top + this.plotH + 14);
     }
-    c.fillText('Right ascension (east to the left)', left + W / 2, this.height - 4);
+    c.fillText('Right ascension', left + W / 2, this.height - 4);
     c.textAlign = 'right';
     for (let dec = Math.ceil(this.dec[0] / 15) * 15; dec <= this.dec[1]; dec += 15) {
       c.fillText(`${dec}°`, left - 6, this.y(dec) + 4);
@@ -273,7 +273,7 @@ function drawNight() {
 
     const n = visibleCount(t), time = stopsOf('--time');
     if (state.color === 'bands') {
-      c.globalAlpha = 0.32;
+      c.globalAlpha = 0.42;
       const colors = Object.fromEntries(INDEX.bands.map(b => [b, css(`--${b}`)]));
       for (let k = 0; k < n; k++) for (const q of N.geo[k].quads) {
         c.fillStyle = colors[q.band]; c.beginPath(); m.path(q.points, true); c.fill();

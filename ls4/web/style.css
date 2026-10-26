@@ -1,11 +1,12 @@
-/* Tokens follow the palette of ls4/bands.py's band map: g aqua, i blue, z orange. */
+/* Band colors follow the LS4 camera diagram (g teal, i gold, z sienna), stepped to pass the
+   dataviz palette checks in each mode. */
 .viz-root {
   color-scheme: light;
   --page: #f4f4f2; --surface-1: #fcfcfb; --border: #d9d8d4;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
   --grid: #e1e0d9; --axis: #c3c2b7; --empty: #e7e6e2; --prior: #dddcd6;
   --plane: #8a3ffc; --tooltip-bg: rgba(11,11,11,.92); --bar: #898781;
-  --g: #1baf7a; --i: #2a78d6; --z: #eb6834; --all: #52514e;
+  --g: #4fc09a; --i: #dba521; --z: #a0522d; --all: #52514e; --accent: #2a78d6;
   --ramp: #cde2fb, #86b6ef, #3987e5, #256abf, #104281;
   --time: #f2b28f, #eb6834, #b4461a, #6e2a0d;
   --warn: #fab219; --good: #0ca30c;
@@ -17,7 +18,7 @@
     --text-primary: #f0efec; --text-secondary: #c3c2b7; --muted: #898781;
     --grid: #2c2c2a; --axis: #383835; --empty: #2a2a28; --prior: #2f2f2c;
     --plane: #b39dff; --tooltip-bg: rgba(40,40,38,.96); --bar: #898781;
-    --g: #199e70; --i: #3987e5; --z: #d95926; --all: #c3c2b7;
+    --g: #34a07e; --i: #bd8a12; --z: #a0522d; --all: #c3c2b7; --accent: #3987e5;
     --ramp: #0d366b, #184f95, #2a78d6, #6da7ec, #cde2fb;
     --time: #7a2e0e, #c24e1f, #ef8253, #fbd3bf;
   }
@@ -28,7 +29,7 @@
   --text-primary: #f0efec; --text-secondary: #c3c2b7; --muted: #898781;
   --grid: #2c2c2a; --axis: #383835; --empty: #2a2a28; --prior: #2f2f2c;
   --plane: #b39dff; --tooltip-bg: rgba(40,40,38,.96); --bar: #898781;
-  --g: #199e70; --i: #3987e5; --z: #d95926; --all: #c3c2b7;
+  --g: #34a07e; --i: #bd8a12; --z: #a0522d; --all: #c3c2b7; --accent: #3987e5;
   --ramp: #0d366b, #184f95, #2a78d6, #6da7ec, #cde2fb;
   --time: #7a2e0e, #c24e1f, #ef8253, #fbd3bf;
 }
@@ -40,14 +41,14 @@ main { max-width: 1500px; margin: 0 auto; padding: 18px 24px 28px; }
 h1 { font-size: 1.35rem; margin: 0 0 2px; }
 .note, footer { color: var(--text-secondary); margin: 4px 0 12px; line-height: 1.4; font-size: .9rem; }
 footer { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 10px; font-size: .82rem; }
-a { color: var(--i); }
+a { color: var(--accent); }
 [hidden] { display: none !important; }
 
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin: 10px 0 14px; }
 .group { display: flex; align-items: center; gap: 8px; }
 .group > span { font-weight: 600; font-size: .9rem; }
 .grow { flex: 1; min-width: 300px; }
-.grow input[type=range] { flex: 1; accent-color: var(--i); }
+.grow input[type=range] { flex: 1; accent-color: var(--accent); }
 output { font-variant-numeric: tabular-nums; font-size: .88rem; color: var(--text-secondary); white-space: nowrap; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button, button.plain, button.step, select {

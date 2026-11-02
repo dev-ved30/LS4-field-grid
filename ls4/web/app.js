@@ -973,6 +973,44 @@ function renderCharts() {
     title: x => dayLabel(list[nearestNight(x)].date),
   });
 
+  // Fraction of sorted `gaps` at or below `x`.
+  const cdfAt = (gaps, x) => {
+    let lo = 0, hi = gaps.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (gaps[mid] <= x) lo = mid + 1; else hi = mid; }
+    return gaps.length ? lo / gaps.length : 0;
+  };
+
+  // Gaps between successive exposures of a field, by survey program, through the selected night.
+  // Log scale: within-night pair spacing (minutes to hours) and the cadence between nights (days).
+  const programs = [{key: 'sole', name: 'SOLE', color: css('--plane')},
+                    {key: 'extragalactic', name: 'extragalactic', color: css('--accent')}];
+  const visitSeries = programs.map(p => ({...p,
+    gaps: S.visitGaps[p.key].slice(0, state.nightIdx + 1).flat().sort((a, b) => a - b)}));
+  const visitContainer = $('visit-gap-chart');
+  const allVisits = visitSeries.flatMap(g => g.gaps).sort((a, b) => a - b);
+  const between = gaps => median(gaps.filter(g => g >= 0.5));
+  const medians = visitSeries.filter(g => between(g.gaps) !== null).map(g => `${g.name} ${num(between(g.gaps), 1)} d`);
+  $('visit-gap-note').textContent = medians.length ? `median between nights: ${medians.join(' · ')}` : '';
+  $('visit-gap-note').title = 'Median of the gaps longer than half a day, through the selected night';
+  if (!allVisits.length) {
+    visitContainer.replaceChildren(el('p', {class: 'note'}, 'No field has been visited twice yet.'));
+  } else {
+    const short = v => num(v, v < 10 && Math.abs(v - Math.round(v)) > 0.05 ? 1 : 0);
+    const duration = d => d < 1 / 24 - 1e-9 ? `${num(d * 1440)} min` : d < 1 - 1e-9 ? `${short(d * 24)} h` : `${short(d)} d`;
+    const lo = Math.log10(Math.min(allVisits[0], 1 / 24)) - 0.05;
+    const hi = Math.log10(Math.max(allVisits[Math.floor(0.99 * (allVisits.length - 1))], 10)) + 0.05;
+    const ticks = [10 / 1440, 30 / 1440, 1 / 24, 3 / 24, 12 / 24, 1, 3, 10, 30, 100].map(Math.log10)
+      .filter(v => v >= lo && v <= hi);
+    const steps = Array.from({length: 241}, (_, k) => lo + k / 240 * (hi - lo));
+    lineChart(visitContainer, {
+      series: visitSeries.map(g => ({...g, points: steps.map(x => [x, cdfAt(g.gaps, 10 ** x) * 100])})),
+      xDomain: [lo, hi], yDomain: [0, 100], yFormat: v => `${v}%`, xFormat: v => duration(10 ** v), xTicks: ticks,
+      snap: x => steps.reduce((best, v) => Math.abs(v - x) < Math.abs(best - x) ? v : best),
+      valueAt: (line, x) => `${num(cdfAt(line.gaps, 10 ** x) * 100)}% of ${num(line.gaps.length)}`,
+      title: x => `Gaps of ${duration(10 ** x)} or less`,
+    });
+  }
+
   // Distribution of gaps between observed nights, through the selected night.
   const gapSeries = INDEX.bands.map(b => {
     const gaps = [];
@@ -982,11 +1020,6 @@ function renderCharts() {
   });
   const all = gapSeries.flatMap(g => g.gaps).sort((a, b) => a - b);
   const xMax = Math.max(4, all.length ? Math.ceil(all[Math.floor(0.95 * (all.length - 1))]) : 4);
-  const cdfAt = (gaps, x) => {
-    let lo = 0, hi = gaps.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (gaps[mid] <= x) lo = mid + 1; else hi = mid; }
-    return gaps.length ? lo / gaps.length : 0;
-  };
   const gapContainer = $('gap-chart');
   if (!all.length) {
     gapContainer.replaceChildren(el('p', {class: 'note'}, 'No pixel has been observed on two nights yet.'));

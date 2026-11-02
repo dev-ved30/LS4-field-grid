@@ -190,6 +190,19 @@ def night_data(stamp, plan, night_info, files, sole_fields, area):
 
 # ---- per collection --------------------------------------------------------
 
+def visit_gaps(plans, night_order, sole_fields):
+    """Days between successive exposures of each field (pair members included), by program.
+
+    Each program lists, per night, the gaps that end on that night.
+    """
+    visits = plans.sort_values("start_time_mjd")
+    gaps = visits.assign(gap=visits.groupby("base_field")["start_time_mjd"].diff()).dropna(subset=["gap"])
+    sole = gaps["base_field"].isin(sole_fields)
+    return {program: [[round(float(g), 4) for g in subset.loc[subset["night"] == night, "gap"]]
+                      for night in night_order]
+            for program, subset in (("sole", gaps[sole]), ("extragalactic", gaps[~sole]))}
+
+
 def build_collection(collection, out, nside):
     from ls4.bands import band_map_data, band_visits, nightly_area, pixel_stats
     from ls4.grid import load_grid_csv, program_ids
@@ -249,6 +262,7 @@ def build_collection(collection, out, nside):
                                                 for band in BANDS},
                              "all": round(float(areas.loc[stamp, "all_bands_cumulative_deg2"]), 1)}
                             for stamp in order]
+    survey["visitGaps"] = visit_gaps(plans, order, sole_fields)
     survey["nside"] = nside
     write_compact(data_dir / "survey.json", survey)
     return {"key": key, "label": collection["label"], "description": collection["description"],

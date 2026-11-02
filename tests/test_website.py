@@ -39,6 +39,14 @@ def test_site_is_consistent(tmp_path, plans_dir):
     survey = json.loads((out / "data" / "production" / "survey.json").read_text())
     assert [n["label"] for n in survey["nights"]] == ["20260717", "20260718"]
     assert len(survey["cumulative"]) == 2 and survey["pixels"]
+    gaps = survey["visitGaps"]
+    assert all(len(gaps[program]) == 2 for program in ("sole", "extragalactic"))
+    # Every field observed on both nights has one more exposure than gaps.
+    assert sum(len(g) for program in gaps.values() for g in program) == sum(
+        n["images"] for n in production["nights"]) - len(
+        {f for stamp in ("20260717", "20260718") for f in json.loads(
+            (out / "data" / "production" / f"{stamp}.json").read_text())["targets"]})
+    assert all(g > 0 for program in gaps.values() for night in program for g in night)
 
     night = json.loads((out / "data" / "production" / "20260717.json").read_text())
     assert len(night["pointings"]) == night["metrics"]["images"] == production["nights"][0]["images"]

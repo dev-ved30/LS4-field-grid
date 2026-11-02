@@ -32,7 +32,11 @@
     <div class="seg" id="collection" aria-label="Plans"></div>
     <div class="picker">
       <button type="button" class="step" id="prev" aria-label="Previous night">&#8249;</button>
-      <select id="night" aria-label="Night"></select>
+      <div class="date-picker">
+        <button type="button" class="date-button" id="night" aria-haspopup="dialog" aria-expanded="false"
+                aria-controls="calendar" aria-label="Choose night"></button>
+        <div class="calendar" id="calendar" role="dialog" aria-label="Choose night" hidden></div>
+      </div>
       <button type="button" class="step" id="next" aria-label="Next night">&#8250;</button>
       <button type="button" class="plain" id="tonight">Tonight</button>
     </div>
@@ -57,6 +61,7 @@
         <div class="tooltip" id="night-tooltip"></div></div>
       <div class="legend" id="night-legend"></div>
     </div>
+    <div class="card weather" id="weather" aria-label="La Silla weather tonight" hidden></div>
     <details id="pointings">
       <summary>Pointings</summary>
       <div class="table-wrap"><table>
@@ -87,6 +92,8 @@
       <figure><figcaption>Area observed (deg², cumulative)</figcaption><div class="plot" id="area-chart"></div></figure>
       <figure><figcaption>Exposures per night</figcaption><div class="plot" id="exposure-chart"></div></figure>
       <figure><figcaption>Gaps between observed nights</figcaption><div class="plot" id="gap-chart"></div></figure>
+      <figure><figcaption>Share of exposure time on SOLE</figcaption><p class="fig-note" id="share-note"></p>
+        <div class="plot" id="share-chart"></div></figure>
     </div>
   </section>
 

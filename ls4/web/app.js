@@ -8,7 +8,7 @@ const D2R = Math.PI / 180;
 const CHILE = 'America/Santiago';
 const wrap180 = a => ((a + 180) % 360 + 360) % 360 - 180;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const mjdDate = mjd => new Date((mjd - 40587) * 864e5);
+const mjdDate = mjd => new Date(Math.round((mjd - 40587) * 86400) * 1000);  // to the second
 const hhmm = (mjd, timeZone = 'UTC') => mjdDate(mjd).toLocaleTimeString('en-GB',
   {timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
 const dayLabel = (iso, opts = {weekday: 'short', year: 'numeric'}) =>
@@ -21,6 +21,7 @@ const raHours = ra => {
   const minutes = Math.round((((ra % 360) + 360) % 360) / 15 * 60) % 1440;
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}h${String(minutes % 60).padStart(2, '0')}m`;
 };
+const pct = (f, digits = 1) => f === null ? '–' : `${num(f * 100, digits)}%`;
 const tonightStamp = () => new Date(Date.now() - 12 * 3600e3).toISOString().slice(0, 10).replaceAll('-', '');
 
 function el(tag, attrs = {}, ...children) {
@@ -264,6 +265,13 @@ function defaultNight(list) {
   return best;
 }
 
+// Exposure time by survey program over night summaries; `fraction` is SOLE's share.
+function programShare(list) {
+  let sole = 0, total = 0;
+  for (const {programMinutes: m} of list) { sole += m.sole; total += m.sole + m.extragalactic; }
+  return {sole, total, fraction: total ? sole / total : null};
+}
+
 function writeHash() {
   const p = new URLSearchParams({c: state.collection.key, n: current().night, v: state.view});
   if (state.view === 'survey') { p.set('band', state.band); p.set('metric', state.metric); }
@@ -413,6 +421,9 @@ function renderNightInfo() {
          `${hhmm(start)}–${hhmm(end)} UTC · ${num((end - start) * 24, 1)} h`),
     stat('Exposures', num(M.images), `${num(M.complete_pairs)} pairs`),
     stat('Area', `${num(N.area.any)} deg²`, `g ${num(N.area.g)} · i ${num(N.area.i)} · z ${num(N.area.z)}`),
+    stat('SOLE time', pct(programShare([N]).fraction),
+         `${pct(programShare(nights().slice(0, nights().findIndex(n => n.night === N.night) + 1)).fraction)} to date` +
+         ` · target ${pct(INDEX.soleTarget, 0)}`),
     stat('Moon', `${num(N.moonIllumination * 100)}%`, 'illuminated'),
   ];
   const w = N.release && N.release.weather;
@@ -480,6 +491,110 @@ async function showNight() {
   nightMap.center = skyAt(N, (N.window[0] + N.window[1]) / 2).lst;
   renderNightInfo();
   updateClock();
+  renderWeather(N);
+}
+
+// ---- live weather ------------------------------------------------------------------
+// For tonight only, the browser fetches an hourly Open-Meteo forecast for La Silla over the
+// night window (the source ls4/weather.py uses for nightly releases). Advisory, never a gate.
+
+const WEATHER = [
+  {key: 'cloud_cover', label: 'cloud', unit: '%', color: '--accent'},
+  {key: 'relative_humidity_2m', label: 'humidity', unit: '%', color: '--plane'},
+  {key: 'precipitation_probability', label: 'rain', unit: '%', color: '--warn'},
+  {key: 'wind_speed_10m', label: 'wind', unit: ' m/s', digits: 1, color: '--accent'},
+  {key: 'wind_gusts_10m', label: 'gusts', unit: ' m/s', digits: 1, color: '--muted'},
+  {key: 'temperature_2m', label: '', unit: ' °C', digits: 1, color: '--text-secondary'},
+];
+const WEATHER_CHARTS = [
+  {title: 'Cloud, humidity and rain chance (%)', keys: ['cloud_cover', 'relative_humidity_2m', 'precipitation_probability'], range: () => [0, 100]},
+  {title: 'Wind and gusts (m/s)', keys: ['wind_speed_10m', 'wind_gusts_10m'], range: (lo, hi) => [0, Math.max(5, hi * 1.15)]},
+  {title: 'Temperature (°C)', keys: ['temperature_2m'], range: (lo, hi) => [Math.floor(lo - 1), Math.ceil(hi + 1)]},
+];
+let weatherShown = null;  // the forecast on screen, redrawn when the card resizes
+const WEATHER_TTL = 15 * 60e3;
+const weatherCache = new Map();  // night -> {at, promise}
+
+function fetchWeather(N) {
+  const cached = weatherCache.get(N.night);
+  if (cached && Date.now() - cached.at < WEATHER_TTL) return cached.promise;
+  const first = Math.floor(N.window[0] * 24) / 24, last = Math.ceil(N.window[1] * 24) / 24;
+  const isoDay = mjd => mjdDate(mjd).toISOString().slice(0, 10);
+  const query = new URLSearchParams({
+    latitude: INDEX.site.lat, longitude: INDEX.site.lon, elevation: INDEX.site.elevation,
+    hourly: WEATHER.map(v => v.key).join(','), timezone: 'GMT', wind_speed_unit: 'ms',
+    temperature_unit: 'celsius', start_date: isoDay(first), end_date: isoDay(last),
+  });
+  const promise = fetch(`https://api.open-meteo.com/v1/forecast?${query}`).then(async r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const raw = await r.json(), hourly = raw.hourly;
+    const hours = hourly.time.map((t, k) => ({mjd: Date.parse(`${t}:00Z`) / 864e5 + 40587, k}))
+      .filter(h => h.mjd >= first - 1e-6 && h.mjd <= last + 1e-6)
+      .map(({mjd, k}) => ({mjd, ...Object.fromEntries(WEATHER.map(v => [v.key, hourly[v.key][k]]))}));
+    if (!hours.length) throw new Error('no forecast hours cover the night');
+    return {hours, retrieved: new Date()};
+  });
+  weatherCache.set(N.night, {at: Date.now(), promise});
+  promise.catch(() => weatherCache.delete(N.night));
+  return promise;
+}
+
+async function renderWeather(N) {
+  const box = $('weather');
+  if (N.night !== tonightStamp()) { box.hidden = true; return; }
+  box.hidden = false;
+  const head = note => el('div', {class: 'card-head'}, el('strong', {}, 'La Silla weather tonight'), el('span', {class: 'note'}, note));
+  box.replaceChildren(head('Loading forecast…'));
+  let W;
+  try { W = await fetchWeather(N); } catch (error) {
+    if (state.night === N) box.replaceChildren(head(`Forecast unavailable (${error.message}).`));
+    return;
+  }
+  if (state.night !== N) return;
+  const values = key => W.hours.map(h => h[key]).filter(v => typeof v === 'number');
+  const max = key => Math.max(...values(key)), min = key => Math.min(...values(key));
+  const fmt = (v, d) => typeof v === 'number' ? num(v, d || 0) : '–';
+  const summary = [
+    stat('Cloud (max)', `${fmt(max('cloud_cover'))}%`, `mean ${fmt(values('cloud_cover').reduce((a, b) => a + b, 0) / values('cloud_cover').length)}%`),
+    stat('Rain chance (max)', `${fmt(max('precipitation_probability'))}%`),
+    stat('Humidity (max)', `${fmt(max('relative_humidity_2m'))}%`),
+    stat('Wind / gusts (max)', `${fmt(max('wind_speed_10m'), 1)} / ${fmt(max('wind_gusts_10m'), 1)}`, 'm/s'),
+    stat('Temperature', `${fmt(min('temperature_2m'), 1)}–${fmt(max('temperature_2m'), 1)} °C`),
+  ];
+  box.replaceChildren(
+    head(`Hourly Open-Meteo forecast, retrieved ${W.retrieved.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})} local time`),
+    el('div', {class: 'stats'}, ...summary),
+    el('div', {class: 'charts'}, ...WEATHER_CHARTS.map(c => el('figure', {}, el('figcaption', {}, c.title), el('div', {class: 'plot'})))),
+    el('p', {class: 'note'}, 'Hours in Chile time; the dashed line marks now. Advisory only: telescope weather limits and ',
+       'site operations remain authoritative. ', el('a', {href: 'https://open-meteo.com/'}, 'Weather data by Open-Meteo'), ' (CC BY 4.0).'));
+  weatherShown = {N, W};
+  drawWeather();
+}
+
+function drawWeather() {
+  const box = $('weather');
+  if (!weatherShown || box.hidden || state.night !== weatherShown.N) return;
+  const {hours} = weatherShown.W, mjds = hours.map(h => h.mjd);
+  const xDomain = [mjds[0], mjds[mjds.length - 1]], now = Date.now() / 864e5 + 40587;
+  const step = Math.max(1, Math.ceil(hours.length / Math.max(2, Math.floor(box.clientWidth / 3 / 70))));
+  const nearest = x => mjds.reduce((best, v, k) => Math.abs(v - x) < Math.abs(mjds[best] - x) ? k : best, 0);
+  box.querySelectorAll('.plot').forEach((plot, c) => {
+    const chart = WEATHER_CHARTS[c], specs = chart.keys.map(key => WEATHER.find(v => v.key === key));
+    const values = specs.flatMap(spec => hours.map(h => h[spec.key])).filter(v => typeof v === 'number');
+    lineChart(plot, {
+      series: specs.map(spec => ({name: spec.label, color: css(spec.color), spec,
+        points: hours.filter(h => typeof h[spec.key] === 'number').map(h => [h.mjd, h[spec.key]])})),
+      xDomain, yDomain: chart.range(Math.min(...values), Math.max(...values)),
+      xTicks: mjds.filter((_, k) => k % step === 0), xFormat: v => hhmm(v, CHILE),
+      yFormat: v => num(v), marker: now >= xDomain[0] && now <= xDomain[1] ? now : undefined,
+      snap: x => mjds[nearest(x)],
+      valueAt: (line, x) => {
+        const point = line.points.find(p => p[0] === x);
+        return point ? `${num(point[1], line.spec.digits || 0)}${line.spec.unit}` : '–';
+      },
+      title: x => `${hhmm(x, CHILE)} Chile · ${hhmm(x)} UTC`,
+    });
+  });
 }
 
 let playFrame = null;
@@ -713,7 +828,7 @@ function dateTicks(lo, hi, count) {
   return ticks;
 }
 
-function axes(f, X, Y, xDomain, yDomain, xFormat, dates = false, yFormat = compact) {
+function axes(f, X, Y, xDomain, yDomain, xFormat, dates = false, yFormat = compact, xTicks = null) {
   const {s, m, width, height} = f;
   for (const v of niceTicks(yDomain[0], yDomain[1])) {
     s.append(svg('line', {class: 'gridline', x1: m.left, x2: width - m.right, y1: Y(v), y2: Y(v)}));
@@ -721,7 +836,7 @@ function axes(f, X, Y, xDomain, yDomain, xFormat, dates = false, yFormat = compa
   }
   s.append(svg('line', {class: 'baseline', x1: m.left, x2: width - m.right, y1: height - m.bottom, y2: height - m.bottom}));
   const count = Math.max(2, Math.floor((width - m.left - m.right) / 70));
-  const ticks = (dates ? dateTicks : niceTicks)(xDomain[0], xDomain[1], count);
+  const ticks = xTicks || (dates ? dateTicks : niceTicks)(xDomain[0], xDomain[1], count);
   for (const v of ticks) s.append(svg('text', {x: X(v), y: height - m.bottom + 16, 'text-anchor': 'middle'}, xFormat(v)));
 }
 
@@ -746,12 +861,16 @@ function tipRows(tip, title, rows) {
     el('span', {class: 'key', style: `border-color:${color}`}), el('strong', {}, value), label)));
 }
 
-function lineChart(container, {series, xDomain, yDomain, xFormat, yFormat, marker, snap, valueAt, title, dates}) {
+function lineChart(container, {series, xDomain, yDomain, xFormat, yFormat, marker, snap, valueAt, title, dates, reference, xTicks}) {
   const f = frame(container, true), {s, m, width, height} = f;
   const X = v => m.left + (v - xDomain[0]) / (xDomain[1] - xDomain[0] || 1) * (width - m.left - m.right);
   const Y = v => height - m.bottom - (v - yDomain[0]) / (yDomain[1] - yDomain[0] || 1) * (height - m.top - m.bottom);
-  axes(f, X, Y, xDomain, yDomain, xFormat, dates, yFormat);
+  axes(f, X, Y, xDomain, yDomain, xFormat, dates, yFormat, xTicks);
   if (marker !== undefined) s.append(svg('line', {class: 'selected-line', x1: X(marker), x2: X(marker), y1: m.top, y2: height - m.bottom}));
+  if (reference) {
+    s.append(svg('line', {class: 'reference-line', x1: m.left, x2: width - m.right, y1: Y(reference.value), y2: Y(reference.value)}));
+    s.append(svg('text', {x: m.left + 4, y: Y(reference.value) - 5}, reference.label));
+  }
   // Direct labels at line ends, nudged apart so they never overlap.
   const ends = [];
   for (const line of series) {
@@ -819,6 +938,35 @@ function renderCharts() {
     s.append(bar, hit);
   });
 
+  // SOLE share of exposure time, per night and to date, against the scheduler's target.
+  let soleMinutes = 0, totalMinutes = 0;
+  const nightlyShare = [], shareToDate = [];
+  list.forEach((n, k) => {
+    const {sole, extragalactic} = n.programMinutes;
+    soleMinutes += sole; totalMinutes += sole + extragalactic;
+    if (sole + extragalactic) nightlyShare.push([mjds[k], sole / (sole + extragalactic) * 100]);
+    if (totalMinutes) shareToDate.push([mjds[k], soleMinutes / totalMinutes * 100]);
+  });
+  const share = programShare(list.slice(0, state.nightIdx + 1)), target = INDEX.soleTarget * 100;
+  $('share-note').textContent = share.total
+    ? `Through ${dayLabel(current().date)}: SOLE ${pct(share.fraction)}, extragalactic ${pct(1 - share.fraction)}` +
+      ` of ${num(share.total / 60, 1)} h exposed · target ${pct(INDEX.soleTarget, 0)} SOLE`
+    : 'No exposures yet.';
+  const shareAt = (line, x) => {
+    const point = line.points.find(p => p[0] === x);
+    return point ? `${num(point[1], 1)}%` : 'no exposures';
+  };
+  lineChart($('share-chart'), {
+    series: [{name: 'nightly', color: css('--muted'), points: nightlyShare},
+             {name: 'to date', color: css('--plane'), points: shareToDate}],
+    xDomain: [first, Math.max(last, first + 1)],
+    yDomain: [0, Math.min(100, Math.max(target, ...nightlyShare.map(p => p[1])) * 1.1) || 100],
+    yFormat: v => `${v}%`, xFormat: dateTick, marker: through, dates: true,
+    reference: {value: target, label: `target ${num(target)}%`},
+    snap: x => mjds[nearestNight(x)], valueAt: shareAt,
+    title: x => dayLabel(list[nearestNight(x)].date),
+  });
+
   // Distribution of gaps between observed nights, through the selected night.
   const gapSeries = INDEX.bands.map(b => {
     const gaps = [];
@@ -860,6 +1008,88 @@ function renderFooter() {
         a.addEventListener('click', event => { event.preventDefault(); signOut(); }); return a; })()] : [])));
 }
 
+// ---- night calendar --------------------------------------------------------------
+// A month grid in place of a long drop-down; only nights with a plan can be picked.
+
+const calendar = {month: null};  // shown month, 'YYYY-MM'
+const isoMonth = iso => iso.slice(0, 7);
+function shiftMonth(month, by) {
+  const d = new Date(`${month}-01T12:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + by);
+  return isoMonth(d.toISOString());
+}
+
+function renderCalendar() {
+  const list = nights(), month = calendar.month, start = new Date(`${month}-01T12:00:00Z`);
+  const byDate = new Map(list.map((n, k) => [n.date, k])), today = stampIso(tonightStamp());
+  const length = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0)).getUTCDate();
+  const nav = (by, label, disabled) => {
+    const b = el('button', {type: 'button', class: 'step', 'aria-label': label}, by < 0 ? '\u2039' : '\u203a');
+    b.disabled = disabled;
+    b.addEventListener('click', () => { calendar.month = shiftMonth(month, by); renderCalendar(); });
+    return b;
+  };
+  const cells = Array.from({length: start.getUTCDay()}, () => el('span'));
+  for (let d = 1; d <= length; d++) {
+    const iso = `${month}-${String(d).padStart(2, '0')}`, k = byDate.get(iso);
+    const b = el('button', {type: 'button', class: 'day', tabindex: k === state.nightIdx ? 0 : -1,
+                            'aria-label': dayLabel(iso, {weekday: 'long', year: 'numeric'})}, String(d));
+    if (k === undefined) b.disabled = true;
+    else {
+      b.dataset.k = k;
+      b.setAttribute('aria-pressed', String(k === state.nightIdx));
+      b.addEventListener('click', () => { closeCalendar(true); selectNight(k); });
+    }
+    if (iso === today) { b.classList.add('today'); b.setAttribute('aria-current', 'date'); }
+    cells.push(b);
+  }
+  const firstMonth = isoMonth(list[0].date), lastMonth = isoMonth(list[list.length - 1].date);
+  $('calendar').replaceChildren(
+    el('div', {class: 'cal-head'}, nav(-1, 'Previous month', month <= firstMonth),
+       el('strong', {}, start.toLocaleDateString('en-US', {month: 'long', year: 'numeric', timeZone: 'UTC'})),
+       nav(1, 'Next month', month >= lastMonth)),
+    el('div', {class: 'cal-grid weekdays', 'aria-hidden': 'true'},
+       ...['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(w => el('span', {}, w))),
+    el('div', {class: 'cal-grid'}, ...cells),
+    el('p', {class: 'cal-note'}, `${num(list.length)} nights, ${dayLabel(list[0].date, {year: 'numeric'})} to ` +
+       `${dayLabel(list[list.length - 1].date, {year: 'numeric'})}. Ringed: tonight.`));
+}
+
+function focusDay(k) {
+  const month = isoMonth(nights()[k].date);
+  if (month !== calendar.month) { calendar.month = month; renderCalendar(); }
+  const b = $('calendar').querySelector(`[data-k="${k}"]`);
+  if (b) b.focus();
+}
+function openCalendar() {
+  calendar.month = isoMonth(current().date);
+  $('calendar').hidden = false;
+  $('night').setAttribute('aria-expanded', 'true');
+  renderCalendar();
+  focusDay(state.nightIdx);
+}
+function closeCalendar(refocus) {
+  if ($('calendar').hidden) return;
+  $('calendar').hidden = true;
+  $('night').setAttribute('aria-expanded', 'false');
+  if (refocus) $('night').focus();
+}
+// Arrow keys step between nights with plans (left/right) or about a week (up/down).
+function calendarKey(event) {
+  if (event.key === 'Escape') { event.preventDefault(); closeCalendar(true); return; }
+  if (event.target.dataset.k === undefined) return;
+  const k = Number(event.target.dataset.k), list = nights(), week = {ArrowUp: -7, ArrowDown: 7}[event.key];
+  let next = null;
+  if (event.key === 'ArrowLeft') next = k - 1;
+  else if (event.key === 'ArrowRight') next = k + 1;
+  else if (week) {
+    const goal = Date.parse(list[k].date) + week * 864e5;
+    next = list.reduce((best, n, j) => Math.abs(Date.parse(n.date) - goal) < Math.abs(Date.parse(list[best].date) - goal) ? j : best, k);
+  } else return;
+  event.preventDefault();
+  focusDay(clamp(next, 0, list.length - 1));
+}
+
 // ---- wiring ------------------------------------------------------------------------
 
 let nightMap, surveyMap, syncColor, syncBand, syncMetric, syncView, syncCollection;
@@ -883,7 +1113,8 @@ function setView(view) {
 
 function selectNight(k) {
   state.nightIdx = clamp(k, 0, nights().length - 1);
-  $('night').value = String(state.nightIdx);
+  $('night').textContent = `${dayLabel(current().date)}${current().night === tonightStamp() ? ' · tonight' : ''}`;
+  if (!$('calendar').hidden) renderCalendar();
   $('prev').disabled = state.nightIdx === 0;
   $('next').disabled = state.nightIdx === nights().length - 1;
   $('through').value = state.nightIdx;
@@ -899,9 +1130,7 @@ async function selectCollection(key, nightStamp) {
   state.collection = INDEX.collections.find(c => c.key === key) || INDEX.collections[0];
   syncCollection();
   renderFooter();
-  const stamp = tonightStamp();
-  $('night').replaceChildren(...nights().map((n, k) => el('option', {value: String(k)},
-    `${dayLabel(n.date)}${n.night === stamp ? ' · tonight' : ''}`)));
+  closeCalendar(false);
   $('through').max = nights().length - 1;
   state.survey = null; state.pixel = null; state.night = null;
   const k = nights().findIndex(n => n.night === nightStamp);
@@ -967,7 +1196,9 @@ async function main() {
   syncMetric = segmented('metric', Object.entries(METRICS).map(([key, m]) => ({key, label: m.label})),
     () => state.metric, key => { state.metric = key; syncMetric(); writeHash(); drawSurvey(); });
 
-  $('night').addEventListener('change', e => selectNight(Number(e.target.value)));
+  $('night').addEventListener('click', () => ($('calendar').hidden ? openCalendar() : closeCalendar(true)));
+  $('calendar').addEventListener('keydown', calendarKey);
+  document.addEventListener('pointerdown', event => { if (!event.target.closest('.date-picker')) closeCalendar(false); });
   $('prev').addEventListener('click', () => selectNight(state.nightIdx - 1));
   $('next').addEventListener('click', () => selectNight(state.nightIdx + 1));
   $('tonight').addEventListener('click', () => selectNight(defaultNight(nights())));
@@ -986,7 +1217,7 @@ async function main() {
     drawSurvey(); renderPixelDetail();
   });
   document.addEventListener('keydown', event => {
-    if (event.target.matches('input, select, textarea')) return;
+    if (event.target.matches('input, select, textarea') || event.target.closest('#calendar')) return;
     if (event.key === 'ArrowLeft') selectNight(state.nightIdx - 1);
     if (event.key === 'ArrowRight') selectNight(state.nightIdx + 1);
   });
@@ -994,10 +1225,15 @@ async function main() {
   new ResizeObserver(entries => {
     const w = entries[0].contentRect.width;
     if (w !== chartWidth) { chartWidth = w; renderCharts(); }
-  }).observe(document.querySelector('.charts'));
+  }).observe(document.querySelector('#survey-view .charts'));
+  let weatherWidth = 0;
+  new ResizeObserver(entries => {
+    const w = entries[0].contentRect.width;
+    if (w !== weatherWidth) { weatherWidth = w; drawWeather(); }
+  }).observe($('weather'));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (state.night) renderNightInfo();
-    drawNight(); drawSurvey(); renderCharts();
+    drawNight(); drawSurvey(); renderCharts(); drawWeather();
   });
 
 

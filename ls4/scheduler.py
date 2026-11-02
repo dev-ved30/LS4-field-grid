@@ -10,7 +10,7 @@ from astropy.coordinates import NonRotationTransformationWarning, SkyCoord
 from astropy.time import Time
 
 from ls4.config import (GRID_DB, LS4, NON_SCIENCE_TARGETS, SOLE, default_block_duration, exp,
-                        global_constraints, max_cluster_radius, read_out, slew_rate, sole_cadence,
+                        max_cluster_radius, night_constraints, read_out, slew_rate, sole_cadence,
                         sole_fraction)
 from ls4.grid import grid_steps, load_schedulable, record_pairs
 
@@ -35,13 +35,13 @@ def science_pointings(plan):
     return science
 
 
-def visibility_at_slots(coords, starts, exposure_duration):
+def visibility_at_slots(coords, starts, exposure_duration, constraints):
     """Check every constraint at the start and end of each proposed observation."""
     endpoints = np.column_stack((starts.mjd, (starts + exposure_duration).mjd)).ravel()
     times = Time(endpoints, format="mjd", scale="utc")
     allowed = np.logical_and.reduce([
         constraint(LS4, coords, times=times, grid_times_targets=True)
-        for constraint in global_constraints
+        for constraint in constraints
     ])
     return allowed[:, 0::2] & allowed[:, 1::2]
 
@@ -140,6 +140,7 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     programs = grid["program_id"].to_numpy()
     last_scheduled = grid["last_scheduled_mjd"].fillna(0).to_numpy(dtype=float)
     phase = dither_phase(night_start)
+    constraints = night_constraints(night_start, night_end)
     coords, dithers = pair_coords(grid["ra_deg"].to_numpy(), grid["dec_deg"].to_numpy(), phase)
     unit_vectors = coords.cartesian.xyz.value.T
     used = np.zeros(len(grid), dtype=bool)
@@ -158,8 +159,8 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
         # When each due field's last initial/dither pair can start, sampled every 10 minutes.
         samples = night_start + np.arange(0, (night_end - night_start - 2 * min_revisit).to_value(u.min), 10) * u.min
         idx = np.flatnonzero(sole_due)
-        ok = (visibility_at_slots(coords[idx], samples, exposure_duration) &
-              visibility_at_slots(dithers[idx], samples + min_revisit, exposure_duration))
+        ok = (visibility_at_slots(coords[idx], samples, exposure_duration, constraints) &
+              visibility_at_slots(dithers[idx], samples + min_revisit, exposure_duration, constraints))
         last = ok.shape[1] - 1 - np.argmax(ok[:, ::-1], axis=1)
         sole_sets[idx] = np.where(ok.any(axis=1), samples.mjd[last], -np.inf)
     previous_coord = None
@@ -173,8 +174,8 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
         offsets = np.arange(slots) * exposure_duration
         first_starts = current_time + offsets
         second_starts = first_starts + block_duration
-        first_ok = visibility_at_slots(coords, first_starts, exposure_duration)
-        second_ok = visibility_at_slots(dithers, second_starts, exposure_duration)
+        first_ok = visibility_at_slots(coords, first_starts, exposure_duration, constraints)
+        second_ok = visibility_at_slots(dithers, second_starts, exposure_duration, constraints)
         sidereal_degrees = first_starts.sidereal_time("mean", longitude=LS4.location.lon).deg
         first_observations = []
         second_observations = []
@@ -280,5 +281,6 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
     record_pairs(pairs["last_mjd"], db_path)
     assert len(pairs) == completed, "Only complete pairs should be recorded"
     print(f"Wrote {output_path}: {2 * completed} images in {completed} complete pairs "
-          f"({sole_pairs} SOLE, budget {sole_budget}; dither phase {phase})")
+          f"({sole_pairs} SOLE, budget {sole_budget}; dither phase {phase}; "
+          f"Moon limit {constraints[-1].min.to_value(u.deg):.1f} deg)")
     return obs_plan

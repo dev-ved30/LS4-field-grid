@@ -345,7 +345,7 @@ function drawNight() {
     c.beginPath(); m.path(circle(sky.lst, INDEX.site.lat, INDEX.airmassRadius), true); c.stroke();
     c.lineWidth = 1.2; c.setLineDash([5, 4]);
     c.strokeStyle = css('--muted');
-    c.beginPath(); m.path(circle(sky.moonRa, sky.moonDec, INDEX.moonSeparation), true); c.stroke();
+    c.beginPath(); m.path(circle(sky.moonRa, sky.moonDec, N.moonSeparation), true); c.stroke();
     c.setLineDash([]);
     const zx = m.x(sky.lst), zy = m.y(INDEX.site.lat);
     c.strokeStyle = css('--text-secondary'); c.lineWidth = 1.5; c.beginPath();

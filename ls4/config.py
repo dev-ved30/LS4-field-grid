@@ -6,10 +6,11 @@ Regenerate dependent outputs after changing them.
 
 from pathlib import Path
 
+import numpy as np
 from astroplan import Observer
 from astroplan.constraints import AirmassConstraint, AtNightConstraint, MoonSeparationConstraint
 from astropy import units as u
-from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.coordinates import EarthLocation, SkyCoord, get_body
 from astropy.utils import iers
 from regions import RectangleSkyRegion
 
@@ -37,6 +38,9 @@ min_declination = -60 * u.deg  # Minimum declination limit for fields
 max_airmass = 1.6
 default_block_duration = 30 * u.minute  # Also the minimum initial-to-dither revisit time.
 max_cluster_radius = 16 * u.deg  # Keep a block's field centers near its first pointing.
+# Moon avoidance grows with phase: (Sun-Moon angle / 180 deg)^2 * 55 deg, but never below 10 deg.
+full_moon_separation = 55 * u.deg
+min_moon_separation = 10 * u.deg
 
 # Survey programs (grid `program_id`).
 SOLE = 0  # Stellar Oscillations, Lensing, and Eruptions: the Galactic plane and bulge.
@@ -46,9 +50,19 @@ sole_bulge = {"l": 20, "b": 8}  # |l| <= 20, |b| <= 8
 sole_fraction = 0.25  # Target share of each night's pairs.
 sole_cadence = 1 * u.day  # Nominal cadence for SOLE fields.
 
-global_constraints = [AirmassConstraint(max=max_airmass),
-                      AtNightConstraint.twilight_civil(),
-                      MoonSeparationConstraint(min=15 * u.deg)]
+
+def moon_separation_limit(time):
+    """Minimum target-Moon separation for the Moon's phase at `time`."""
+    elongation = get_body("moon", time, LS4.location).separation(get_body("sun", time, LS4.location))
+    return max(min_moon_separation, (elongation.to_value(u.rad) / np.pi) ** 2 * full_moon_separation)
+
+
+def night_constraints(start, end):
+    """Observing constraints for one night; the Moon limit is fixed at the night's midpoint."""
+    return [AirmassConstraint(max=max_airmass),
+            AtNightConstraint.twilight_civil(),
+            MoonSeparationConstraint(min=moon_separation_limit(start + (end - start) / 2))]
+
 
 # Focal-plane bands in 2x2 quadrants: i on one diagonal, z top right, g bottom left.
 # Keys are (RA side, Dec side), +1 toward increasing RA / Dec. The figure's left/right

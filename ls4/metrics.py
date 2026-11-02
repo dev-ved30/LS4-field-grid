@@ -10,7 +10,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from ls4.config import (FOV_length, FOV_width, GRID_CSV, SOLE, default_block_duration, exp,
-                        min_declination, read_out, slew_rate)
+                        min_declination, night_constraints, read_out, slew_rate)
 from ls4.grid import load_grid_csv, load_history, program_ids
 from ls4.scheduler import complete_pairs, pair_coords, science_pointings, visibility_at_slots
 
@@ -150,8 +150,9 @@ def sampled_visibility(grid, plan_paths, sample_minutes):
         if count <= 0:
             continue
         starts = start + np.arange(count) * step
-        possible = (visibility_at_slots(initial, starts, duration) &
-                    visibility_at_slots(dither, starts + default_block_duration, duration))
+        constraints = night_constraints(start, end)
+        possible = (visibility_at_slots(initial, starts, duration, constraints) &
+                    visibility_at_slots(dither, starts + default_block_duration, duration, constraints))
         visible_nights[positions] += possible.any(axis=1)
     return eligible, visible_nights
 

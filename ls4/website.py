@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from ls4.config import (BANDS, FOV_length, FOV_width, LS4, PLANS_DIR, QUADRANT_BANDS, ROOT,
-                        SOLE, global_constraints, max_airmass)
+                        SOLE, max_airmass, moon_separation_limit)
 
 WEB = Path(__file__).resolve().parent / "web"
 REPOSITORY = "dev-ved30/LS4-field-grid"
@@ -167,6 +167,7 @@ def night_data(stamp, plan, night_info, files, sole_fields, area):
         "metrics": {key: _plain(value) for key, value in night_metrics(plan).items()},
         "area": area,
         "moonIllumination": round(float(LS4.moon_illumination(middle)), 3),
+        "moonSeparation": round(float(moon_separation_limit(middle).to_value("deg")), 2),
         "sky": sky_samples(start, end),
         "targets": science["base_field"].tolist(),
         # [start MJD, end MJD, RA, Dec, dither, block, SOLE]
@@ -316,8 +317,6 @@ class Sealer:
 
 def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSITORY,
                token=None, nside=64, password=None):
-    from astroplan.constraints import MoonSeparationConstraint
-
     out = prepare_output(output)
     collections = repository_collections(plans_dir)
     if releases:
@@ -330,7 +329,6 @@ def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSI
     decs = [p[3] for c in index for n in c["nights"]
             for p in json.loads((out / "data" / c["key"] / f"{n['night']}.json").read_text())["pointings"]]
     half = np.hypot(FOV_width.to_value("deg"), FOV_length.to_value("deg")) / 2 + 2
-    moon_sep = next(c.min for c in global_constraints if isinstance(c, MoonSeparationConstraint))
     write_compact(out / "data" / "index.json", {
         "generatedUtc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "commit": code_commit(), "repository": repository,
@@ -341,7 +339,6 @@ def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSI
         "bands": list(BANDS),
         "airmassRadius": float(np.degrees(np.arccos(1 / max_airmass))),
         "maxAirmass": max_airmass,
-        "moonSeparation": float(moon_sep.to_value("deg")),
         "decRange": [max(-90, 10 * np.floor((min(decs) - half) / 10)),
                      min(90, 10 * np.ceil((max(decs) + half) / 10))],
         "galactic": galactic_plane(),

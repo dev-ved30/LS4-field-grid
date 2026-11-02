@@ -131,7 +131,7 @@ def validate_plan(plan, start, end):
     from astropy.coordinates import SkyCoord
     from astropy.time import Time
     from astropy import units as u
-    from ls4.config import LS4, global_constraints
+    from ls4.config import LS4, night_constraints
     from ls4.scheduler import science_pointings, validate_pairs, validate_slews
 
     pairs = validate_pairs(plan)
@@ -146,7 +146,7 @@ def validate_plan(plan, start, end):
     if np.any(starts.mjd < start.mjd - 1e-8) or np.any(ends.mjd > end.mjd + 1e-8):
         raise ValueError("Pointings fall outside astronomical twilight")
     coords = SkyCoord(science["ra"].to_numpy() * u.deg, science["dec"].to_numpy() * u.deg)
-    for constraint in global_constraints:
+    for constraint in night_constraints(start, end):
         for times in (starts, ends):
             if not np.all(constraint(LS4, coords, times=times, grid_times_targets=False)):
                 raise ValueError(f"Plan violates {type(constraint).__name__}")

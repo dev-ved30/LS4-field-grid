@@ -9,11 +9,12 @@ from pathlib import Path
 
 import pandas as pd
 from astropy import units as u
+from astropy.time import Time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ls4.cli import main  # noqa: E402
-from ls4.config import EXTRAGALACTIC, SOLE  # noqa: E402
+from ls4.config import EXTRAGALACTIC, SOLE, moon_separation_limit, night_constraints  # noqa: E402
 from ls4.grid import fresh_db, load_grid_csv, load_history, program_ids  # noqa: E402
 from ls4.metrics import night_metrics  # noqa: E402
 from ls4.scheduler import dither_phase, night_window, pair_coords, plan_night  # noqa: E402
@@ -44,6 +45,15 @@ def test_night_window_is_one_night():
     start, end = night_window(pd.Timestamp("2026-07-17").date())
     assert start.iso.startswith("2026-07-17")
     assert 8 < (end - start).to_value(u.hour) < 12
+
+
+def test_moon_limit_follows_phase():
+    new = night_window(pd.Timestamp("2026-11-08").date())
+    full = night_window(pd.Timestamp("2026-11-24").date())
+    assert night_constraints(*new)[-1].min == 10 * u.deg  # floor near new Moon
+    assert 45 < night_constraints(*full)[-1].min.to_value(u.deg) <= 55
+    quarter = moon_separation_limit(Time("2026-11-17T04:00:00", scale="utc")).to_value(u.deg)
+    assert 10 < quarter < 30
 
 
 def test_sole_footprint():
@@ -83,6 +93,7 @@ def test_band_quadrants():
 if __name__ == "__main__":
     test_band_quadrants()
     test_dither_alternates_by_night()
+    test_moon_limit_follows_phase()
     test_sole_footprint()
     test_night_window_is_one_night()
     test_short_night_schedules_valid_pairs()

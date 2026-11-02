@@ -206,27 +206,32 @@ def plan_night(night_start, night_end, output_path, db_path=GRID_DB):
                 if not len(available):
                     continue
 
+            if anchor is None:
+                # Start in a dense region so the rest of the block can remain nearby.
+                future = unit_vectors[np.flatnonzero(np.any(pair_ok, axis=1) & ~used)]
+                neighbors = (unit_vectors[available] @ future.T >=
+                             np.cos(max_cluster_radius.to_value(u.rad))).sum(axis=1)
+                fillable = neighbors >= slots - slot
+
             # Program allocation is a preference among reachable fields; it
-            # must not force a jump out of the current sky cluster.
+            # must not force a jump out of the current sky cluster, nor start
+            # a SOLE cluster where too few fields remain to fill the block.
             if sole_pairs < sole_budget:
-                preferred = sole_due[available]
+                preferred = sole_due[available] & (fillable if anchor is None else True)
             else:
                 preferred = programs[available] != SOLE
             if np.any(preferred):
                 available = available[preferred]
                 slew_degrees = slew_degrees[preferred]
+                if anchor is None:
+                    neighbors, fillable = neighbors[preferred], fillable[preferred]
 
             age_days = np.where(last_scheduled[available] <= 0, 30,
                                 np.clip(first_starts[slot].mjd - last_scheduled[available], 0, 30))
             hour_angle = (sidereal_degrees[slot] - grid["ra_deg"].to_numpy()[available] + 180) % 360 - 180
             if anchor is None:
-                # Start in a dense region so the rest of the block can remain
-                # nearby. Prefer an overdue region when densities are similar.
-                future = unit_vectors[np.flatnonzero(np.any(pair_ok, axis=1) & ~used)]
-                neighbors = (unit_vectors[available] @ future.T >=
-                             np.cos(max_cluster_radius.to_value(u.rad))).sum(axis=1)
+                # Prefer an overdue region when densities are similar.
                 score = 2 * neighbors + 0.2 * age_days + 0.5 * hour_angle / 90 - 0.4 * slew_degrees
-                fillable = neighbors >= slots - slot
                 if sole_due[available].all() and fillable.any():
                     # Start SOLE clusters on the field that sets first, so the
                     # cluster sweeps toward fields that stay up longer, but only

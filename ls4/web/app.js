@@ -884,6 +884,35 @@ function lineChart(container, {series, xDomain, yDomain, xFormat, yFormat, marke
   });
 }
 
+// One bar per night, the selected night highlighted; click a bar to open that night.
+function nightBars(container, mjds, value, rows, dateTick) {
+  const list = nights(), f = frame(container, false), {s, m, width, height} = f;
+  const first = mjds[0], last = mjds[mjds.length - 1], span = Math.max(last - first, 1);
+  const X = v => m.left + 6 + (v - first) / span * (width - m.left - m.right - 12);
+  const yMax = Math.max(...list.map(value)) * 1.05 || 1;
+  const Y = v => height - m.bottom - v / yMax * (height - m.top - m.bottom);
+  axes(f, X, Y, [first, last], [0, yMax], dateTick, true);
+  const spacing = mjds.length > 1 ? Math.min(...mjds.slice(1).map((v, k) => v - mjds[k])) : span;
+  const barW = clamp(spacing / span * (width - m.left - m.right) - 2, 2, 24);
+  list.forEach((n, k) => {
+    const v = value(n);
+    const bar = svg('rect', {x: X(mjds[k]) - barW / 2, y: Y(v), width: barW, height: Y(0) - Y(v),
+      rx: Math.min(2, barW / 2), fill: k === state.nightIdx ? 'var(--text-primary)' : 'var(--bar)', cursor: 'pointer'});
+    const hit = svg('rect', {x: X(mjds[k]) - Math.max(barW, 10) / 2, y: m.top, width: Math.max(barW, 10),
+      height: height - m.top - m.bottom, fill: 'transparent', cursor: 'pointer', tabindex: 0});
+    const show = event => {
+      tipRows(f.tip, dayLabel(n.date), rows(n));
+      const box = s.getBoundingClientRect();
+      placeTooltip(f.tip, X(mjds[k]) * box.width / width, event.clientY ? event.clientY - box.top : 40, box.width);
+    };
+    hit.addEventListener('pointermove', show);
+    hit.addEventListener('focus', show);
+    hit.addEventListener('pointerleave', () => { f.tip.style.display = 'none'; });
+    hit.addEventListener('click', () => { selectNight(k); setView('night'); });
+    s.append(bar, hit);
+  });
+}
+
 function renderCharts() {
   const S = state.survey;
   if (!S || state.view !== 'survey') return;
@@ -905,32 +934,15 @@ function renderCharts() {
     title: x => dayLabel(stampIso(S.cumulative[nearestNight(x)].night)),
   });
 
-  // Exposures per night; click to open that night.
-  const list = nights(), f = frame($('exposure-chart'), false), {s, m, width, height} = f;
-  const span = Math.max(last - first, 1);
-  const X = v => m.left + 6 + (v - first) / span * (width - m.left - m.right - 12);
-  const yMax = Math.max(...list.map(n => n.images)) * 1.05 || 1;
-  const Y = v => height - m.bottom - v / yMax * (height - m.top - m.bottom);
-  axes(f, X, Y, [first, last], [0, yMax], dateTick, true);
-  const spacing = mjds.length > 1 ? Math.min(...mjds.slice(1).map((v, k) => v - mjds[k])) : span;
-  const barW = clamp(spacing / span * (width - m.left - m.right) - 2, 2, 24);
-  list.forEach((n, k) => {
-    const bar = svg('rect', {x: X(mjds[k]) - barW / 2, y: Y(n.images), width: barW, height: Y(0) - Y(n.images),
-      rx: Math.min(2, barW / 2), fill: k === state.nightIdx ? 'var(--text-primary)' : 'var(--bar)', cursor: 'pointer'});
-    const hit = svg('rect', {x: X(mjds[k]) - Math.max(barW, 10) / 2, y: m.top, width: Math.max(barW, 10),
-      height: height - m.top - m.bottom, fill: 'transparent', cursor: 'pointer', tabindex: 0});
-    const show = event => {
-      tipRows(f.tip, dayLabel(n.date), [['var(--bar)', num(n.images), ' exposures'],
-        ['var(--bar)', num(n.pairs), ' pairs'], ['var(--bar)', `${num(n.area.any)} deg²`, ' area']]);
-      const box = s.getBoundingClientRect();
-      placeTooltip(f.tip, X(mjds[k]) * box.width / width, event.clientY ? event.clientY - box.top : 40, box.width);
-    };
-    hit.addEventListener('pointermove', show);
-    hit.addEventListener('focus', show);
-    hit.addEventListener('pointerleave', () => { f.tip.style.display = 'none'; });
-    hit.addEventListener('click', () => { selectNight(k); setView('night'); });
-    s.append(bar, hit);
-  });
+  // Exposures and unused minutes per night; click a bar to open that night.
+  const list = nights();
+  nightBars($('exposure-chart'), mjds, n => n.images, n => [['var(--bar)', num(n.images), ' exposures'],
+    ['var(--bar)', num(n.pairs), ' pairs'], ['var(--bar)', `${num(n.area.any)} deg²`, ' area']], dateTick);
+  nightBars($('unused-chart'), mjds, n => n.unusedMinutes, n => [['var(--bar)', `${num(n.unusedMinutes)} min`, ' unused'],
+    ['var(--bar)', pct(n.windowMinutes ? n.unusedMinutes / n.windowMinutes : null), ' of the night']], dateTick);
+  const unused = list.slice(0, state.nightIdx + 1).reduce((t, n) => t + n.unusedMinutes, 0);
+  const nightMinutes = list.slice(0, state.nightIdx + 1).reduce((t, n) => t + n.windowMinutes, 0);
+  $('unused-note').textContent = `${num(unused / 60, 1)} h (${pct(nightMinutes ? unused / nightMinutes : null)}) to ${dayLabel(current().date, {})}`;
 
   // SOLE share of exposure time, per night and to date, against the scheduler's target.
   let soleMinutes = 0, totalMinutes = 0;

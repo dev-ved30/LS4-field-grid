@@ -240,6 +240,8 @@ def build_collection(collection, out, nside):
                           "pairs": night["metrics"]["complete_pairs"],
                           "solePairs": night["metrics"]["sole_pairs"], "area": area,
                           "programMinutes": night["programMinutes"],
+                          "unusedMinutes": round(float(night["metrics"]["unused_minutes"]), 1),
+                          "windowMinutes": round((night["window"][1] - night["window"][0]) * 1440, 1),
                           "published": "release" in night})
 
     survey = band_map_data(nightly, order, plans, nside)

@@ -541,7 +541,7 @@ async function renderWeather(N) {
   const box = $('weather');
   if (N.night !== tonightStamp()) { box.hidden = true; return; }
   box.hidden = false;
-  const head = note => el('div', {class: 'card-head'}, el('strong', {}, 'La Silla weather tonight'), el('span', {class: 'aside'}, note));
+  const head = note => el('div', {class: 'card-head'}, el('strong', {}, 'La Silla weather tonight'), el('span', {class: 'aside'}, ...[note].flat()));
   box.replaceChildren(head('Loading forecast…'));
   let W;
   try { W = await fetchWeather(N); } catch (error) {
@@ -556,11 +556,11 @@ async function renderWeather(N) {
                   `max ${max('wind_speed_10m')} / ${max('wind_gusts_10m')} m/s`,
                   `${min('temperature_2m')} to ${max('temperature_2m')} °C`];
   box.replaceChildren(
-    head(`Open-Meteo · updated ${W.retrieved.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}`),
+    head([el('a', {href: 'https://open-meteo.com/', title: 'Weather data by Open-Meteo, CC BY 4.0'}, 'Open-Meteo'),
+          ` · updated ${W.retrieved.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}`]),
     el('div', {class: 'charts'}, ...WEATHER_CHARTS.map((c, k) => el('figure', {},
       el('figcaption', {}, c.title, el('span', {class: 'aside'}, asides[k])), el('div', {class: 'plot'})))),
-    el('p', {class: 'note'}, 'Chile time; dashed line is now. Advisory only: telescope limits and site operations take ',
-       'precedence. Data ', el('a', {href: 'https://open-meteo.com/'}, 'Open-Meteo'), ', CC BY 4.0.'));
+    el('p', {class: 'note'}, 'Chile time; dashed line is now.'));
   weatherShown = {N, W};
   drawWeather();
 }

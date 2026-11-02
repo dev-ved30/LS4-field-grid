@@ -419,27 +419,23 @@ function renderNightInfo() {
   const stats = [
     stat('Night (Chile)', `${hhmm(start, CHILE)}–${hhmm(end, CHILE)}`,
          `${hhmm(start)}–${hhmm(end)} UTC · ${num((end - start) * 24, 1)} h`),
-    stat('Exposures', num(M.images), `${num(M.complete_pairs)} pairs`),
+    stat('Exposures', num(M.images), `${num(M.complete_pairs)} pairs · ${num(M.unused_minutes)} min unused`),
     stat('Area', `${num(N.area.any)} deg²`, `g ${num(N.area.g)} · i ${num(N.area.i)} · z ${num(N.area.z)}`),
     stat('SOLE time', pct(programShare([N]).fraction),
-         `${pct(programShare(nights().slice(0, nights().findIndex(n => n.night === N.night) + 1)).fraction)} to date` +
-         ` · target ${pct(INDEX.soleTarget, 0)}`),
+         `${num(M.sole_pairs)} pairs · ${pct(programShare(nights().slice(0, nights().findIndex(n => n.night === N.night) + 1)).fraction)}` +
+         ` to date (target ${pct(INDEX.soleTarget, 0)})`),
     stat('Moon', `${num(N.moonIllumination * 100)}%`, 'illuminated'),
   ];
   const w = N.release && N.release.weather;
-  if (w) {
+  if (w && N.night !== tonightStamp()) {  // tonight has the live forecast below the map
     stats.push(stat('Cloud (forecast max)', `${num(w.cloud_cover_max_percent)}%`,
       `rain ${num(w.precipitation_probability_max_percent)}% · ${num(w.temperature_min_c)}–${num(w.temperature_max_c)} °C`));
   }
   $('tiles').replaceChildren(...stats);
 
-  const meta = [
-    N.phase === null ? 'Fixed dither (predates the nightly g/z swap)' : `Dither phase ${N.phase}`,
-    `${num(M.sole_pairs)} SOLE pairs`, `${num(M.unused_minutes)} min unused`,
-    `median slew ${num(M.median_slew_deg, 1)}°`,
-  ];
-  $('meta').replaceChildren(meta.join(' · '),
-    ...((N.release && N.release.warnings) || []).map(w => el('span', {class: 'warn'}, ` · ${w}`)));
+  const warnings = (N.release && N.release.warnings) || [];
+  $('meta').hidden = !warnings.length;
+  $('meta').replaceChildren(...warnings.map((w, k) => el('span', {class: 'warn'}, `${k ? ' · ' : ''}${w}`)));
 
   const links = $('links');
   links.replaceChildren(downloadLink(N.files.csv, 'CSV'), downloadLink(N.files.obsplan, '.obsplan'));
@@ -462,7 +458,9 @@ function renderNightInfo() {
   $('night-legend').replaceChildren(...items);
 
   const summary = $('pointings').querySelector('summary');
-  summary.textContent = `Pointings (${num(N.pointings.length)})`;
+  summary.replaceChildren(`Pointings (${num(N.pointings.length)})`, el('span', {class: 'aside'},
+    ` · ${N.phase === null ? 'fixed dither (predates the nightly g/z swap)' : `dither phase ${N.phase}`}` +
+    ` · median slew ${num(M.median_slew_deg, 1)}°`));
   $('pointings').querySelector('tbody').replaceChildren();
   if ($('pointings').open) fillTable();
 }
@@ -507,7 +505,7 @@ const WEATHER = [
   {key: 'temperature_2m', label: '', unit: ' °C', digits: 1, color: '--text-secondary'},
 ];
 const WEATHER_CHARTS = [
-  {title: 'Cloud, humidity and rain chance (%)', keys: ['cloud_cover', 'relative_humidity_2m', 'precipitation_probability'], range: () => [0, 100]},
+  {title: 'Cloud, humidity, rain (%)', keys: ['cloud_cover', 'relative_humidity_2m', 'precipitation_probability'], range: () => [0, 100]},
   {title: 'Wind and gusts (m/s)', keys: ['wind_speed_10m', 'wind_gusts_10m'], range: (lo, hi) => [0, Math.max(5, hi * 1.15)]},
   {title: 'Temperature (°C)', keys: ['temperature_2m'], range: (lo, hi) => [Math.floor(lo - 1), Math.ceil(hi + 1)]},
 ];
@@ -543,7 +541,7 @@ async function renderWeather(N) {
   const box = $('weather');
   if (N.night !== tonightStamp()) { box.hidden = true; return; }
   box.hidden = false;
-  const head = note => el('div', {class: 'card-head'}, el('strong', {}, 'La Silla weather tonight'), el('span', {class: 'note'}, note));
+  const head = note => el('div', {class: 'card-head'}, el('strong', {}, 'La Silla weather tonight'), el('span', {class: 'aside'}, note));
   box.replaceChildren(head('Loading forecast…'));
   let W;
   try { W = await fetchWeather(N); } catch (error) {
@@ -552,21 +550,17 @@ async function renderWeather(N) {
   }
   if (state.night !== N) return;
   const values = key => W.hours.map(h => h[key]).filter(v => typeof v === 'number');
-  const max = key => Math.max(...values(key)), min = key => Math.min(...values(key));
-  const fmt = (v, d) => typeof v === 'number' ? num(v, d || 0) : '–';
-  const summary = [
-    stat('Cloud (max)', `${fmt(max('cloud_cover'))}%`, `mean ${fmt(values('cloud_cover').reduce((a, b) => a + b, 0) / values('cloud_cover').length)}%`),
-    stat('Rain chance (max)', `${fmt(max('precipitation_probability'))}%`),
-    stat('Humidity (max)', `${fmt(max('relative_humidity_2m'))}%`),
-    stat('Wind / gusts (max)', `${fmt(max('wind_speed_10m'), 1)} / ${fmt(max('wind_gusts_10m'), 1)}`, 'm/s'),
-    stat('Temperature', `${fmt(min('temperature_2m'), 1)}–${fmt(max('temperature_2m'), 1)} °C`),
-  ];
+  const max = key => num(Math.max(...values(key)), 1).replace(/\.0$/, '');
+  const min = key => num(Math.min(...values(key)), 1).replace(/\.0$/, '');
+  const asides = [`max ${max('cloud_cover')}% cloud · ${max('precipitation_probability')}% rain`,
+                  `max ${max('wind_speed_10m')} / ${max('wind_gusts_10m')} m/s`,
+                  `${min('temperature_2m')} to ${max('temperature_2m')} °C`];
   box.replaceChildren(
-    head(`Hourly Open-Meteo forecast, retrieved ${W.retrieved.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})} local time`),
-    el('div', {class: 'stats'}, ...summary),
-    el('div', {class: 'charts'}, ...WEATHER_CHARTS.map(c => el('figure', {}, el('figcaption', {}, c.title), el('div', {class: 'plot'})))),
-    el('p', {class: 'note'}, 'Hours in Chile time; the dashed line marks now. Advisory only: telescope weather limits and ',
-       'site operations remain authoritative. ', el('a', {href: 'https://open-meteo.com/'}, 'Weather data by Open-Meteo'), ' (CC BY 4.0).'));
+    head(`Open-Meteo · updated ${W.retrieved.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})}`),
+    el('div', {class: 'charts'}, ...WEATHER_CHARTS.map((c, k) => el('figure', {},
+      el('figcaption', {}, c.title, el('span', {class: 'aside'}, asides[k])), el('div', {class: 'plot'})))),
+    el('p', {class: 'note'}, 'Chile time; dashed line is now. Advisory only: telescope limits and site operations take ',
+       'precedence. Data ', el('a', {href: 'https://open-meteo.com/'}, 'Open-Meteo'), ', CC BY 4.0.'));
   weatherShown = {N, W};
   drawWeather();
 }
@@ -949,9 +943,9 @@ function renderCharts() {
   });
   const share = programShare(list.slice(0, state.nightIdx + 1)), target = INDEX.soleTarget * 100;
   $('share-note').textContent = share.total
-    ? `Through ${dayLabel(current().date)}: SOLE ${pct(share.fraction)}, extragalactic ${pct(1 - share.fraction)}` +
-      ` of ${num(share.total / 60, 1)} h exposed · target ${pct(INDEX.soleTarget, 0)} SOLE`
-    : 'No exposures yet.';
+    ? `${pct(share.fraction)} of ${num(share.total / 60)} h to ${dayLabel(current().date, {})} · target ${pct(INDEX.soleTarget, 0)}`
+    : 'no exposures yet';
+  $('share-note').title = 'Exposure time (shutter open plus readout) on SOLE fields, all nights through the selected one';
   const shareAt = (line, x) => {
     const point = line.points.find(p => p[0] === x);
     return point ? `${num(point[1], 1)}%` : 'no exposures';

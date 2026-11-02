@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from ls4.config import (BANDS, FOV_length, FOV_width, LS4, PLANS_DIR, QUADRANT_BANDS, ROOT,
-                        SOLE, max_airmass, moon_separation_limit)
+                        SOLE, max_airmass, moon_separation_limit, sole_fraction)
 
 WEB = Path(__file__).resolve().parent / "web"
 REPOSITORY = "dev-ved30/LS4-field-grid"
@@ -160,12 +160,17 @@ def night_data(stamp, plan, night_info, files, sole_fields, area):
     ends = Time(pd.to_datetime(science["end time (UTC)"]).to_numpy(), scale="utc").mjd
     phase = int(science["configuration"].astype(str).str.contains("'phase': 1").any())
     middle = start + (end - start) / 2
+    sole = science["base_field"].isin(sole_fields).to_numpy()
+    minutes = science["duration (minutes)"].to_numpy()
     data = {
         "night": stamp, "date": stamp_date(stamp).isoformat(),
         "window": [round(start.mjd, 6), round(end.mjd, 6)],
         "phase": phase if science["configuration"].astype(str).str.contains("phase").any() else None,
         "metrics": {key: _plain(value) for key, value in night_metrics(plan).items()},
         "area": area,
+        # Exposure time (shutter open plus readout) by survey program.
+        "programMinutes": {"sole": round(float(minutes[sole].sum()), 2),
+                           "extragalactic": round(float(minutes[~sole].sum()), 2)},
         "moonIllumination": round(float(LS4.moon_illumination(middle)), 3),
         "moonSeparation": round(float(moon_separation_limit(middle).to_value("deg")), 2),
         "sky": sky_samples(start, end),
@@ -234,6 +239,7 @@ def build_collection(collection, out, nside):
                           "images": night["metrics"]["images"],
                           "pairs": night["metrics"]["complete_pairs"],
                           "solePairs": night["metrics"]["sole_pairs"], "area": area,
+                          "programMinutes": night["programMinutes"],
                           "published": "release" in night})
 
     survey = band_map_data(nightly, order, plans, nside)
@@ -333,12 +339,14 @@ def build_site(output, *, plans_dir=PLANS_DIR, releases=False, repository=REPOSI
         "generatedUtc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "commit": code_commit(), "repository": repository,
         "historyNote": HISTORY_NOTE,
-        "site": {"name": LS4.name, "lat": float(LS4.location.lat.deg), "lon": float(LS4.location.lon.deg)},
+        "site": {"name": LS4.name, "lat": float(LS4.location.lat.deg), "lon": float(LS4.location.lon.deg),
+                 "elevation": float(LS4.location.height.to_value("m"))},
         "fov": {"ra": FOV_width.to_value("deg"), "dec": FOV_length.to_value("deg")},
         "quadrants": [[sx, sy, band] for (sx, sy), band in QUADRANT_BANDS.items()],
         "bands": list(BANDS),
         "airmassRadius": float(np.degrees(np.arccos(1 / max_airmass))),
         "maxAirmass": max_airmass,
+        "soleTarget": sole_fraction,
         "decRange": [max(-90, 10 * np.floor((min(decs) - half) / 10)),
                      min(90, 10 * np.ceil((max(decs) + half) / 10))],
         "galactic": galactic_plane(),

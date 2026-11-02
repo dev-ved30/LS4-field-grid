@@ -76,6 +76,28 @@ button.plain.small { padding: 4px 10px; font-size: .82rem; }
 button.step { padding: 3px 11px; font-size: 1.1rem; line-height: 1.2; }
 button:disabled { opacity: .35; cursor: default; }
 select { font-weight: 600; max-width: 24rem; }
+
+/* Night calendar */
+.date-picker { position: relative; }
+button.date-button { border: 1px solid var(--border); border-radius: 7px; background: var(--surface-1); cursor: pointer;
+  padding: 6px 30px 6px 11px; font-size: .88rem; font-weight: 600; min-width: 13rem; text-align: left; position: relative; }
+button.date-button::after { content: ""; position: absolute; right: 11px; top: 50%; width: 6px; height: 6px; margin-top: -5px;
+  border: solid var(--text-secondary); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+button.date-button[aria-expanded="true"] { border-color: var(--text-secondary); }
+.calendar { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: 272px; padding: 10px 12px 8px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.cal-head strong { font-size: .9rem; font-weight: 600; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-grid.weekdays span { text-align: center; font-size: .7rem; font-weight: 600; color: var(--muted); padding: 2px 0 4px; }
+.cal-grid .day { border: 0; background: none; border-radius: 6px; height: 32px; cursor: pointer; font-size: .85rem;
+  font-weight: 600; font-variant-numeric: tabular-nums; }
+.cal-grid .day:hover:not(:disabled) { background: var(--empty); }
+.cal-grid .day:disabled { color: var(--muted); font-weight: 400; opacity: .55; }
+.cal-grid .day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cal-grid .day[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); }
+.cal-grid .day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cal-note { margin: 6px 0 0; font-size: .74rem; color: var(--muted); }
 .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
 .line-key { width: 18px; border-top: 2px solid var(--text-secondary); display: inline-block; }
 .line-key.dashed { border-top-style: dashed; }
@@ -110,6 +132,17 @@ canvas { display: block; width: 100%; cursor: crosshair; }
 .tooltip .key { width: 12px; border-top: 2px solid; display: inline-block; }
 .tooltip strong { font-weight: 600; }
 
+/* Tonight's weather */
+.weather { margin-top: 14px; }
+.weather .card-head { gap: 4px 12px; }
+.weather .card-head strong { font-size: .9rem; font-weight: 600; }
+.weather .card-head .note { font-size: .8rem; }
+.weather .stats { padding: 12px 14px 4px; }
+.weather .stat .value { font-size: 1.15rem; }
+.weather .charts { margin: 8px 14px 0; }
+.weather figure { padding: 10px 12px 4px; }
+.weather > p.note { margin: 8px 14px 12px; font-size: .76rem; }
+
 /* Pointings table */
 details { margin-top: 14px; }
 summary { cursor: pointer; font-size: .88rem; color: var(--text-secondary); padding: 4px 0; }
@@ -140,6 +173,8 @@ figcaption { font-size: .85rem; font-weight: 600; margin-bottom: 4px; }
 .plot .baseline { stroke: var(--axis); }
 .plot .crosshair { stroke: var(--muted); }
 .plot .selected-line { stroke: var(--text-primary); stroke-dasharray: 3 3; }
+.plot .reference-line { stroke: var(--text-secondary); stroke-dasharray: 6 4; }
+.fig-note { margin: 0 0 4px; font-size: .8rem; color: var(--text-secondary); }
 .note { color: var(--text-secondary); font-size: .85rem; }
 
 /* Password screen */
@@ -165,7 +200,8 @@ footer p { margin: 0 0 4px; }
   .masthead { flex-wrap: wrap; }
   .tabs { margin: 6px 0 -15px; width: 100%; }
   .picker { width: 100%; }
-  select { flex: 1; min-width: 0; }
+  .date-picker { flex: 1; min-width: 0; }
+  button.date-button { width: 100%; min-width: 0; }
   .downloads { margin-left: 0; }
   .stats { gap: 10px 24px; }
   .stat .value { font-size: 1.2rem; }

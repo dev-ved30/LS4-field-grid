@@ -43,6 +43,11 @@ def test_site_is_consistent(tmp_path, plans_dir):
     night = json.loads((out / "data" / "production" / "20260717.json").read_text())
     assert len(night["pointings"]) == night["metrics"]["images"] == production["nights"][0]["images"]
     assert sum(p[4] for p in night["pointings"]) == night["metrics"]["complete_pairs"]
+    minutes = night["programMinutes"]
+    assert minutes == production["nights"][0]["programMinutes"]
+    assert minutes["sole"] + minutes["extragalactic"] == pytest.approx(
+        sum((p[1] - p[0]) * 1440 for p in night["pointings"]), abs=0.1)
+    assert index["soleTarget"] == pytest.approx(0.25)
     assert night["window"][0] - 1e-5 <= night["pointings"][0][0] < night["pointings"][-1][1] <= night["window"][1] + 1e-5
     obsplan = out / night["files"]["obsplan"]
     assert obsplan.name == "20260718.obsplan"

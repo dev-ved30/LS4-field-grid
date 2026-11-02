@@ -141,7 +141,7 @@ parameters in `ls4/config.py`):
 
 - **0, SOLE** (Stellar Oscillations, Lensing, and Eruptions): field centers in the plane,
   −72° ≤ l ≤ 36° and |b| ≤ 4°, or the bulge, |l| ≤ 20° and |b| ≤ 8°. That is 55 fields
-  (~1,280 deg²), 47 of them above the −60° declination limit.
+  (~1,280 deg²), all above the −70° declination limit.
 - **1, extragalactic**: everything else.
 
 SOLE has a nominal 1-day cadence and about 25% of the survey. A SOLE field is due once half

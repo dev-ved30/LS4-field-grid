@@ -34,7 +34,7 @@ FOV = FOV_width**2
 FOV_g = FOV / 4
 
 # Observing constraints
-min_declination = -60 * u.deg  # Minimum declination limit for fields
+min_declination = -70 * u.deg  # Minimum declination limit for fields
 max_airmass = 1.6
 default_block_duration = 30 * u.minute  # Also the minimum initial-to-dither revisit time.
 max_cluster_radius = 16 * u.deg  # Keep a block's field centers near its first pointing.

@@ -48,6 +48,9 @@ def test_site_is_consistent(tmp_path, plans_dir):
     assert minutes["sole"] + minutes["extragalactic"] == pytest.approx(
         sum((p[1] - p[0]) * 1440 for p in night["pointings"]), abs=0.1)
     assert index["soleTarget"] == pytest.approx(0.25)
+    summary = production["nights"][0]
+    assert summary["unusedMinutes"] == pytest.approx(night["metrics"]["unused_minutes"], abs=0.1)
+    assert 0 <= summary["unusedMinutes"] <= summary["windowMinutes"]
     assert night["window"][0] - 1e-5 <= night["pointings"][0][0] < night["pointings"][-1][1] <= night["window"][1] + 1e-5
     obsplan = out / night["files"]["obsplan"]
     assert obsplan.name == "20260718.obsplan"

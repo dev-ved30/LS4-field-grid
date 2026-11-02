@@ -981,35 +981,28 @@ function renderCharts() {
     return gaps.length ? lo / gaps.length : 0;
   };
 
-  // Gaps between successive exposures of a field, by survey program, through the selected night.
-  // Log scale: within-night pair spacing (minutes to hours) and the cadence between nights (days).
+  // Gaps between successive nights a field was observed, by survey program, through the selected
+  // night; a night's pair (initial and dither) counts as one visit.
   const programs = [{key: 'sole', name: 'SOLE', color: css('--plane')},
                     {key: 'extragalactic', name: 'extragalactic', color: css('--accent')}];
-  const visitSeries = programs.map(p => ({...p,
-    gaps: (S.visitGaps?.[p.key] || []).slice(0, state.nightIdx + 1).flat().sort((a, b) => a - b)}));
-  const visitContainer = $('visit-gap-chart');
-  const allVisits = visitSeries.flatMap(g => g.gaps).sort((a, b) => a - b);
-  const between = gaps => median(gaps.filter(g => g >= 0.5));
-  const medians = visitSeries.filter(g => between(g.gaps) !== null).map(g => `${g.name} ${num(between(g.gaps), 1)} d`);
-  $('visit-gap-note').textContent = medians.length ? `median between nights: ${medians.join(' · ')}` : '';
-  $('visit-gap-note').title = 'Median of the gaps longer than half a day, through the selected night';
-  if (!allVisits.length) {
-    visitContainer.replaceChildren(el('p', {class: 'note'}, S.visitGaps
-      ? 'No field has been visited twice yet.' : 'This build has no visit gaps; rebuild the site.'));
+  const fieldSeries = programs.map(p => ({...p,
+    gaps: (S.fieldGaps?.[p.key] || []).slice(0, state.nightIdx + 1).flat().sort((a, b) => a - b)}));
+  const fieldContainer = $('field-gap-chart');
+  const allFields = fieldSeries.flatMap(g => g.gaps).sort((a, b) => a - b);
+  const medians = fieldSeries.filter(g => g.gaps.length).map(g => `${g.name} ${num(median(g.gaps), 1)} d`);
+  $('field-gap-note').textContent = medians.length ? `median ${medians.join(' · ')}` : '';
+  if (!allFields.length) {
+    fieldContainer.replaceChildren(el('p', {class: 'note'}, S.fieldGaps
+      ? 'No field has been observed on two nights yet.' : 'This build has no field gaps; rebuild the site.'));
   } else {
-    const short = v => num(v, v < 10 && Math.abs(v - Math.round(v)) > 0.05 ? 1 : 0);
-    const duration = d => d < 1 / 24 - 1e-9 ? `${num(d * 1440)} min` : d < 1 - 1e-9 ? `${short(d * 24)} h` : `${short(d)} d`;
-    const lo = Math.log10(Math.min(allVisits[0], 1 / 24)) - 0.05;
-    const hi = Math.log10(Math.max(allVisits[Math.floor(0.99 * (allVisits.length - 1))], 10)) + 0.05;
-    const ticks = [10 / 1440, 30 / 1440, 1 / 24, 3 / 24, 12 / 24, 1, 3, 10, 30, 100].map(Math.log10)
-      .filter(v => v >= lo && v <= hi);
-    const steps = Array.from({length: 241}, (_, k) => lo + k / 240 * (hi - lo));
-    lineChart(visitContainer, {
-      series: visitSeries.map(g => ({...g, points: steps.map(x => [x, cdfAt(g.gaps, 10 ** x) * 100])})),
-      xDomain: [lo, hi], yDomain: [0, 100], yFormat: v => `${v}%`, xFormat: v => duration(10 ** v), xTicks: ticks,
-      snap: x => steps.reduce((best, v) => Math.abs(v - x) < Math.abs(best - x) ? v : best),
-      valueAt: (line, x) => `${num(cdfAt(line.gaps, 10 ** x) * 100)}% of ${num(line.gaps.length)}`,
-      title: x => `Gaps of ${duration(10 ** x)} or less`,
+    const fieldMax = Math.max(4, Math.ceil(allFields[Math.floor(0.95 * (allFields.length - 1))]));
+    const steps = Array.from({length: 201}, (_, k) => k / 200 * fieldMax);
+    lineChart(fieldContainer, {
+      series: fieldSeries.map(g => ({...g, points: steps.map(x => [x, cdfAt(g.gaps, x) * 100])})),
+      xDomain: [0, fieldMax], yDomain: [0, 100], yFormat: v => `${v}%`, xFormat: v => `${num(v, v < 10 && v % 1 ? 1 : 0)} d`,
+      snap: x => clamp(Math.round(x * 2) / 2, 0, fieldMax),
+      valueAt: (line, x) => `${num(cdfAt(line.gaps, x) * 100)}% of ${num(line.gaps.length)}`,
+      title: x => `Gaps of ${num(x, 1)} days or less`,
     });
   }
 

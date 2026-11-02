@@ -190,15 +190,18 @@ def night_data(stamp, plan, night_info, files, sole_fields, area):
 
 # ---- per collection --------------------------------------------------------
 
-def visit_gaps(plans, night_order, sole_fields):
-    """Days between successive exposures of each field (pair members included), by program.
+def field_gaps(plans, night_order, sole_fields):
+    """Days between successive nights each field was observed, by program.
 
-    Each program lists, per night, the gaps that end on that night.
+    A night's pair (initial and dither) is one visit. Nights are dated by their first
+    exposure, as in the survey map. Each program lists, per night, the gaps ending that night.
     """
-    visits = plans.sort_values("start_time_mjd")
-    gaps = visits.assign(gap=visits.groupby("base_field")["start_time_mjd"].diff()).dropna(subset=["gap"])
+    night_mjd = plans.groupby("night")["start_time_mjd"].min()
+    visits = plans[["base_field", "night"]].drop_duplicates()
+    visits = visits.assign(mjd=visits["night"].map(night_mjd)).sort_values("mjd")
+    gaps = visits.assign(gap=visits.groupby("base_field")["mjd"].diff()).dropna(subset=["gap"])
     sole = gaps["base_field"].isin(sole_fields)
-    return {program: [[round(float(g), 4) for g in subset.loc[subset["night"] == night, "gap"]]
+    return {program: [[round(float(g), 2) for g in subset.loc[subset["night"] == night, "gap"]]
                       for night in night_order]
             for program, subset in (("sole", gaps[sole]), ("extragalactic", gaps[~sole]))}
 
@@ -262,7 +265,7 @@ def build_collection(collection, out, nside):
                                                 for band in BANDS},
                              "all": round(float(areas.loc[stamp, "all_bands_cumulative_deg2"]), 1)}
                             for stamp in order]
-    survey["visitGaps"] = visit_gaps(plans, order, sole_fields)
+    survey["fieldGaps"] = field_gaps(plans, order, sole_fields)
     survey["nside"] = nside
     write_compact(data_dir / "survey.json", survey)
     return {"key": key, "label": collection["label"], "description": collection["description"],

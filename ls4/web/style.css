@@ -54,6 +54,10 @@ button, select { font: inherit; color: inherit; }
                border-bottom: 2px solid transparent; font-weight: 550; }
 .tabs button[aria-pressed="true"] { color: var(--text-primary); border-bottom-color: var(--text-primary); }
 .tabs button:hover { color: var(--text-primary); }
+.theme-toggle { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  margin-left: 6px; align-self: flex-end; margin-bottom: -8px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-1);
+  color: var(--text-secondary); cursor: pointer; }
+.theme-toggle:hover { color: var(--text-primary); border-color: var(--text-secondary); }
 
 /* Toolbar: plans, night, status, downloads */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 16px 0 18px; }
@@ -202,11 +206,15 @@ button.primary:disabled { opacity: .6; cursor: progress; }
 footer { color: var(--muted); font-size: .78rem; line-height: 1.5; margin-top: 28px; padding-top: 12px;
          border-top: 1px solid var(--border); }
 footer p { margin: 0 0 4px; }
+footer summary { font-size: .8rem; color: var(--muted); }
+footer .about[open] summary { margin-bottom: 6px; }
 
 @media (max-width: 720px) {
   main { padding: 14px 14px 24px; }
   .masthead { flex-wrap: wrap; }
   .tabs { margin: 6px 0 -15px; width: 100%; }
+  .tabs { order: 1; }
+  .theme-toggle { margin-left: auto; align-self: center; margin-bottom: 0; }
   .picker { width: 100%; }
   .date-picker { flex: 1; min-width: 0; }
   button.date-button { width: 100%; min-width: 0; }

@@ -990,9 +990,10 @@ function renderCharts() {
   });
 }
 
+// Notes on the plans stay folded away until asked for.
 function renderFooter() {
-  const commit = INDEX.commit ? INDEX.commit.slice(0, 7) : null;
-  $('footer').replaceChildren(
+  const commit = INDEX.commit ? INDEX.commit.slice(0, 7) : null, previous = $('footer').querySelector('details');
+  const about = el('details', {class: 'about'}, el('summary', {}, 'About these plans'),
     el('p', {}, `${state.collection.label}: ${state.collection.description}`),
     el('p', {}, INDEX.historyNote),
     el('p', {}, `Generated ${INDEX.generatedUtc.replace('T', ' ').replace('+00:00', ' UTC')}`,
@@ -1000,6 +1001,39 @@ function renderFooter() {
       ' · ', el('a', {href: `https://github.com/${INDEX.repository}`}, 'Source and documentation'),
       ...(KEY ? [' · ', (() => { const a = el('a', {href: '#'}, 'Sign out');
         a.addEventListener('click', event => { event.preventDefault(); signOut(); }); return a; })()] : [])));
+  about.open = Boolean(previous && previous.open);
+  $('footer').replaceChildren(about);
+}
+
+// ---- theme ---------------------------------------------------------------------
+// Follows the system until the visitor picks light or dark; the choice is kept on this device.
+
+const THEME_STORE = 'ls4-theme';
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const isDark = () => (document.documentElement.dataset.theme || (darkQuery.matches ? 'dark' : 'light')) === 'dark';
+const ICONS = {
+  moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',
+  sun: 'M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1',
+};
+function syncTheme() {
+  const dark = isDark(), b = $('theme');
+  b.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+  b.title = b.getAttribute('aria-label');
+  b.replaceChildren(svg('svg', {viewBox: '0 0 24 24', width: 18, height: 18, 'aria-hidden': 'true'}));
+  b.firstChild.append(svg('path', {d: ICONS[dark ? 'sun' : 'moon'], fill: dark ? 'none' : 'currentColor',
+    stroke: 'currentColor', 'stroke-width': dark ? 2 : 0, 'stroke-linecap': 'round'}));
+}
+function redrawForTheme() {
+  syncTheme();
+  if (!INDEX) return;
+  if (state.night) renderNightInfo();
+  drawNight(); drawSurvey(); renderCharts(); drawWeather();
+}
+function toggleTheme() {
+  const theme = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(THEME_STORE, theme); } catch (e) { /* private browsing */ }
+  redrawForTheme();
 }
 
 // ---- night calendar --------------------------------------------------------------
@@ -1225,10 +1259,9 @@ async function main() {
     const w = entries[0].contentRect.width;
     if (w !== weatherWidth) { weatherWidth = w; drawWeather(); }
   }).observe($('weather'));
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (state.night) renderNightInfo();
-    drawNight(); drawSurvey(); renderCharts(); drawWeather();
-  });
+  darkQuery.addEventListener('change', redrawForTheme);
+  $('theme').addEventListener('click', toggleTheme);
+  syncTheme();
 
 
   window.addEventListener('hashchange', applyHash);

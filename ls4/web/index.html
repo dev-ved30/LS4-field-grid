@@ -6,6 +6,7 @@
 <title>LS4 observing plans</title>
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="stylesheet" href="style.css">
+<script>try { const t = localStorage.getItem('ls4-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
 <div class="viz-root">
@@ -26,6 +27,7 @@
       <p>La Silla Schmidt Southern Survey</p>
     </div>
     <nav class="tabs" id="view" aria-label="View"></nav>
+    <button type="button" class="theme-toggle" id="theme"></button>
   </header>
 
   <div class="toolbar" aria-label="Plan selection">
@@ -92,7 +94,7 @@
       <figure><figcaption>Area observed (deg², cumulative)</figcaption><div class="plot" id="area-chart"></div></figure>
       <figure><figcaption>Exposures per night</figcaption><div class="plot" id="exposure-chart"></div></figure>
       <figure><figcaption>Gaps between observed nights</figcaption><div class="plot" id="gap-chart"></div></figure>
-      <figure><figcaption>Share of exposure time on SOLE</figcaption><p class="fig-note" id="share-note"></p>
+      <figure><figcaption>SOLE share of exposure time<span class="aside" id="share-note"></span></figcaption>
         <div class="plot" id="share-chart"></div></figure>
     </div>
   </section>

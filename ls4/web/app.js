@@ -252,7 +252,7 @@ const stopsOf = name => css(name).split(',').map(s => s.trim());
 // ---- state ---------------------------------------------------------------------
 
 let INDEX;
-const state = {collection: null, nightIdx: 0, view: 'night', color: 'time', underlay: true,
+const state = {collection: null, nightIdx: 0, view: 'night', color: 'time',
                band: 'i', metric: 'nights', night: null, survey: null, clock: 0, playing: false,
                pixel: null, loads: 0};
 const nights = () => state.collection.nights;
@@ -343,7 +343,7 @@ function drawNight() {
   const c = m.ctx, N = state.night;
   m.begin();
   if (N) {
-    if (state.underlay && state.survey) {
+    if (state.survey) {
       c.fillStyle = css('--prior');
       for (const p of priorPixels()) m.pixel(p, state.survey.pixelDeg);
     }
@@ -1243,7 +1243,6 @@ async function main() {
   $('next').addEventListener('click', () => selectNight(state.nightIdx + 1));
   $('tonight').addEventListener('click', () => selectNight(defaultNight(nights())));
   $('through').addEventListener('input', e => selectNight(Number(e.target.value)));
-  $('underlay').addEventListener('change', e => { state.underlay = e.target.checked; drawNight(); });
   $('clock').addEventListener('input', e => { stopPlay(); state.clock = Number(e.target.value); updateClock(); });
   $('play').addEventListener('click', togglePlay);
   $('pointings').addEventListener('toggle', () => { if ($('pointings').open) fillTable(); });

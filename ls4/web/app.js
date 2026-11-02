@@ -48,8 +48,9 @@ let KEY = null;  // AES key once unlocked; null for an unprotected build
 const KEY_STORE = 'ls4-site-key';
 const b64bytes = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 
+// Revalidate every load so data never lags the page code after a deploy.
 async function fetchBytes(path) {
-  const r = await fetch(path);
+  const r = await fetch(path, {cache: 'no-cache'});
   if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
   return r.arrayBuffer();
 }
@@ -985,7 +986,7 @@ function renderCharts() {
   const programs = [{key: 'sole', name: 'SOLE', color: css('--plane')},
                     {key: 'extragalactic', name: 'extragalactic', color: css('--accent')}];
   const visitSeries = programs.map(p => ({...p,
-    gaps: S.visitGaps[p.key].slice(0, state.nightIdx + 1).flat().sort((a, b) => a - b)}));
+    gaps: (S.visitGaps?.[p.key] || []).slice(0, state.nightIdx + 1).flat().sort((a, b) => a - b)}));
   const visitContainer = $('visit-gap-chart');
   const allVisits = visitSeries.flatMap(g => g.gaps).sort((a, b) => a - b);
   const between = gaps => median(gaps.filter(g => g >= 0.5));
@@ -993,7 +994,8 @@ function renderCharts() {
   $('visit-gap-note').textContent = medians.length ? `median between nights: ${medians.join(' · ')}` : '';
   $('visit-gap-note').title = 'Median of the gaps longer than half a day, through the selected night';
   if (!allVisits.length) {
-    visitContainer.replaceChildren(el('p', {class: 'note'}, 'No field has been visited twice yet.'));
+    visitContainer.replaceChildren(el('p', {class: 'note'}, S.visitGaps
+      ? 'No field has been visited twice yet.' : 'This build has no visit gaps; rebuild the site.'));
   } else {
     const short = v => num(v, v < 10 && Math.abs(v - Math.round(v)) > 0.05 ? 1 : 0);
     const duration = d => d < 1 / 24 - 1e-9 ? `${num(d * 1440)} min` : d < 1 - 1e-9 ? `${short(d * 24)} h` : `${short(d)} d`;
